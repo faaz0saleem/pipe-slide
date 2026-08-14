@@ -1,0 +1,26 @@
+{
+  "name": "pipe-slide",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pipe Slide - a pull-the-pin physics puzzle built with Phaser 3 + Matter.js for CrazyGames",
+  "type": "module",
+  "scripts": {
+    "levels": "node tools/generate-levels.mjs",
+    "verify": "node tools/verify-levels.mjs",
+    "prebuild": "npm run levels && npm run verify && npm run simulate",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "package": "npm run build && node tools/make-zip.mjs",
+    "simulate": "node tools/simulate-levels.mjs",
+    "smoke": "node tools/smoke-test.mjs"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "matter-js": "^0.20.0",
+    "playwright-core": "^1.62.1",
+    "vite": "^5.4.0"
+  }
+}
