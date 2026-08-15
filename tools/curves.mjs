@@ -68,6 +68,27 @@ export function atDistance(path, dist) {
 export const atFraction = (path, f) => atDistance(path, pathLength(path) * f);
 
 /**
+ * Offset a polyline sideways by a distance that varies along its length.
+ * `halfAt(t)` receives the 0..1 position and returns the half-bore there,
+ * which is what turns a plain channel into a flask: a wide reservoir up top
+ * easing into a narrow spout.
+ */
+export function offsetProfiled(path, halfAt, sign) {
+  const last = path.length - 1;
+  const acc = arcTable(path);
+  const total = acc[last] || 1;
+  return path.map((p, i) => {
+    const a = path[Math.max(0, i - 1)];
+    const b = path[Math.min(last, i + 1)];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy) || 1;
+    const d = halfAt(acc[i] / total) * sign;
+    return [r1(p[0] - (dy / len) * d), r1(p[1] + (dx / len) * d)];
+  });
+}
+
+/**
  * Offset a polyline sideways. Positive `d` moves along the left-hand normal.
  * Curvature must stay gentler than `d` or the offset self-intersects — level
  * control points are authored with that in mind.
@@ -145,6 +166,46 @@ export function tube(ctrl, bore, t, stepsPerSpan = 9) {
     walls: [
       { points: offsetPath(path, half), t },
       { points: offsetPath(path, -half), t },
+    ],
+  };
+}
+
+/**
+ * A vessel: a tube whose bore swells into a reservoir near the top and
+ * narrows into a spout below, like laboratory glassware. `bulbHalf` is the
+ * widest half-bore, `spoutHalf` the narrowest, and `shoulder` where along the
+ * length the transition happens.
+ *
+ * The bend guard uses the *spout* half-bore, because that is the only part
+ * that curves; a wide reservoir is always drawn on a near-straight run.
+ */
+export function vessel(ctrl, bulbHalf, spoutHalf, shoulder, t, stepsPerSpan = 12) {
+  const safeRadius = spoutHalf * 1.25;
+
+  let control = ctrl.map((p) => p.slice());
+  let path = smoothPath(control, stepsPerSpan);
+  let relaxed = 0;
+  while (minRadius(path) < safeRadius && relaxed < 14) {
+    control = relax(control, 0.18);
+    path = smoothPath(control, stepsPerSpan);
+    relaxed++;
+  }
+
+  // Flat reservoir, smooth shoulder, flat spout.
+  const ease = (u) => u * u * (3 - 2 * u);
+  const halfAt = (f) => {
+    if (f <= shoulder) return bulbHalf;
+    const u = Math.min(1, (f - shoulder) / 0.22);
+    return bulbHalf + (spoutHalf - bulbHalf) * ease(u);
+  };
+
+  return {
+    path,
+    halfAt,
+    relaxed,
+    walls: [
+      { points: offsetProfiled(path, halfAt, 1), t },
+      { points: offsetProfiled(path, halfAt, -1), t },
     ],
   };
 }

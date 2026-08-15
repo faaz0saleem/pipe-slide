@@ -19,9 +19,18 @@ export default class PipeSystem {
    * @param {Array} pegs  level.pegs
    * @param {string} skinId equipped pipe cosmetic
    */
-  constructor(scene, walls, pegs, skinId) {
+  constructor(scene, walls, pegs, skinId, tubes) {
     this.scene = scene;
     this.walls = walls;
+    this.tubes = tubes || [];
+    // Wall polylines that belong to a channel are drawn as part of it, not as
+    // standalone bars — otherwise every tube reads as two fat glowing noodles
+    // with a gap down the middle instead of one piece of glassware.
+    this.pairedWalls = new Set();
+    for (const t of this.tubes) {
+      this.pairedWalls.add(t.left);
+      this.pairedWalls.add(t.right);
+    }
     this.pegs = pegs || [];
     this.skin = getItem(skinId) || getItem('pipe_glass');
     this.bodies = [];
@@ -61,19 +70,28 @@ export default class PipeSystem {
         this.bodies.push(body);
       }
 
-      // Joint caps stop payloads catching on the mitre between segments.
-      if (w.points.length > 2) {
-        for (let i = 1; i < w.points.length - 1; i++) {
-          const [x, y] = w.points[i];
-          this.bodies.push(
-            matter.add.circle(x, y, t / 2, {
-              isStatic: true,
-              friction: 0.08,
-              restitution: 0.05,
-              label: 'wall',
-            })
-          );
-        }
+      // Joint caps stop payloads catching on the mitre between segments — but
+      // only where the polyline actually turns. On a smoothed curve almost
+      // every joint is near-straight, and capping them all costs hundreds of
+      // bodies per level for no benefit.
+      for (let i = 1; i < w.points.length - 1; i++) {
+        const [px, py] = w.points[i - 1];
+        const [x, y] = w.points[i];
+        const [nx, ny] = w.points[i + 1];
+        const a1 = Math.atan2(y - py, x - px);
+        const a2 = Math.atan2(ny - y, nx - x);
+        let turn = Math.abs(a2 - a1);
+        if (turn > Math.PI) turn = Math.PI * 2 - turn;
+        if (turn < 0.14) continue; // ~8 degrees
+
+        this.bodies.push(
+          matter.add.circle(x, y, t / 2, {
+            isStatic: true,
+            friction: 0.08,
+            restitution: 0.05,
+            label: 'wall',
+          })
+        );
       }
     }
 
@@ -91,15 +109,58 @@ export default class PipeSystem {
 
   /* ----------------------------- rendering ---------------------------- */
 
-  /** Stroke `points` with round joints by also dotting every vertex. */
-  _strokePoly(g, points, width, color, alpha) {
+  /**
+   * Stroke a polyline. `dots` rounds the joints by dotting every vertex, which
+   * a sparse polyline needs and a dense curve must not have — on a smoothed
+   * curve it beads the whole edge into a caterpillar.
+   */
+  _strokePoly(g, points, width, color, alpha, dots = true) {
     g.lineStyle(width, color, alpha);
     g.beginPath();
     points.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
     g.strokePath();
 
+    if (!dots) return;
     g.fillStyle(color, alpha);
     for (const [x, y] of points) g.fillCircle(x, y, width / 2);
+  }
+
+  /**
+   * Draw a stroke as a single filled ribbon.
+   *
+   * Phaser strokes a polyline segment by segment, so on a smoothed curve —
+   * where segments are shorter than the line is wide — every joint overlaps
+   * and a translucent edge beads into a caterpillar. One polygon has no
+   * joints to overlap.
+   */
+  _fillStroke(g, points, width, color, alpha) {
+    const half = width / 2;
+    const last = points.length - 1;
+    const side = (sign) =>
+      points.map((p, i) => {
+        const a = points[Math.max(0, i - 1)];
+        const b = points[Math.min(last, i + 1)];
+        const dx = b[0] - a[0];
+        const dy = b[1] - a[1];
+        const len = Math.hypot(dx, dy) || 1;
+        return { x: p[0] - (dy / len) * half * sign, y: p[1] + (dx / len) * half * sign };
+      });
+
+    const poly = [...side(1), ...side(-1).reverse()];
+    g.fillStyle(color, alpha);
+    g.fillPoints(poly, true);
+    // Round the two ends so the glass does not stop square.
+    g.fillCircle(points[0][0], points[0][1], half);
+    g.fillCircle(points[last][0], points[last][1], half);
+  }
+
+  /** Fill the ribbon between a channel's two edges. */
+  _fillChannel(g, left, right, color, alpha) {
+    const pts = [];
+    for (const [x, y] of left) pts.push({ x, y });
+    for (let i = right.length - 1; i >= 0; i--) pts.push({ x: right[i][0], y: right[i][1] });
+    g.fillStyle(color, alpha);
+    g.fillPoints(pts, true);
   }
 
   redraw() {
@@ -113,36 +174,34 @@ export default class PipeSystem {
     const glowColor = skin.rainbow ? this._rainbow(0.25) : skin.glow;
     const rim = skin.rainbow ? this._rainbow(0.5) : skin.rim;
 
+    // --- channels: transparent glass body between two bright rims ---
+    for (const tube of this.tubes) {
+      const { left, right, t } = tube;
+
+      // The bore: a pane of tinted glass you can still read the level through.
+      this._fillChannel(g, left, right, 0xcfeeff, 0.17);
+      this._fillChannel(g, left, right, glowColor, 0.07);
+
+      // Thin bright rims, the way real glassware reads — not fat bars.
+      for (const side of [left, right]) {
+        this._fillStroke(glow, side, 18, glowColor, 0.14);
+        this._fillStroke(g, side, 10, 0xdff6ff, 0.22);
+        this._fillStroke(g, side, 4.5, stroke, 0.95);
+        this._fillStroke(g, side, 1.5, 0xffffff, 0.7);
+      }
+
+      // Specular streak running down the inside of the left wall.
+      this._specular(g, left, right, rim, t);
+    }
+
+    // --- standalone walls (shelves, dividers) keep the solid-bar treatment ---
     for (const w of this.walls) {
+      if (this.pairedWalls.has(w.points)) continue;
       const t = w.t;
       const pts = w.points;
-
-      // 1. Outer bloom.
-      this._strokePoly(glow, pts, t + 16, glowColor, 0.16);
-      this._strokePoly(glow, pts, t + 6, glowColor, 0.2);
-
-      // 2. Glass body — deliberately near-transparent so the level reads through it.
-      this._strokePoly(g, pts, t, 0xdff6ff, 0.13);
-      this._strokePoly(g, pts, t * 0.72, 0xffffff, 0.06);
-
-      // 3. Bright rim.
-      this._strokePoly(g, pts, 3.5, stroke, 0.95);
-
-      // 4. Specular streak, offset along each segment's normal.
-      for (let i = 0; i < pts.length - 1; i++) {
-        const [x0, y0] = pts[i];
-        const [x1, y1] = pts[i + 1];
-        const dx = x1 - x0;
-        const dy = y1 - y0;
-        const len = Math.hypot(dx, dy) || 1;
-        const nx = (-dy / len) * (t * 0.24);
-        const ny = (dx / len) * (t * 0.24);
-        g.lineStyle(2, rim, 0.5);
-        g.beginPath();
-        g.moveTo(x0 + nx + (dx / len) * 6, y0 + ny + (dy / len) * 6);
-        g.lineTo(x1 + nx - (dx / len) * 6, y1 + ny - (dy / len) * 6);
-        g.strokePath();
-      }
+      this._fillStroke(glow, pts, t + 16, glowColor, 0.16);
+      this._fillStroke(g, pts, t, 0xdff6ff, 0.15);
+      this._fillStroke(g, pts, 4, stroke, 0.95);
     }
 
     // Pegs share the pipe skin so bonus levels feel of a piece.
@@ -156,6 +215,25 @@ export default class PipeSystem {
       g.fillStyle(rim, 0.5);
       g.fillCircle(peg.x - peg.r * 0.3, peg.y - peg.r * 0.35, peg.r * 0.26);
     }
+  }
+
+  /** A highlight just inside one wall, the way light catches curved glass. */
+  _specular(g, left, right, rim, t) {
+    const n = Math.min(left.length, right.length);
+    const line = [];
+    for (let i = 0; i < n; i++) {
+      const lx = left[i][0];
+      const ly = left[i][1];
+      const dx = right[i][0] - lx;
+      const dy = right[i][1] - ly;
+      const len = Math.hypot(dx, dy) || 1;
+      const inset = t * 0.62;
+      line.push([lx + (dx / len) * inset, ly + (dy / len) * inset]);
+    }
+    g.lineStyle(2.5, rim, 0.4);
+    g.beginPath();
+    line.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
+    g.strokePath();
   }
 
   _rainbow(offset) {

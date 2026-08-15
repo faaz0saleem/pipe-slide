@@ -19,7 +19,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tube, smoothPath, pathLength, atDistance, atFraction, r1 } from './curves.mjs';
+import { vessel, smoothPath, pathLength, atDistance, r1 } from './curves.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(__dirname, '../public/levels/levels.json');
@@ -33,6 +33,9 @@ const H = 1280;
 const CHUTE_TOP = 215;
 const GROUND_Y = 1150;
 const WALL_T = 15;
+
+/** Tubes start behind the HUD fade so their open mouths never show. */
+const TUBE_TOP = 168;
 
 /**
  * The diverter neck.
@@ -120,7 +123,7 @@ function wall(points, t = WALL_T) {
   return { points: points.map(([x, y]) => [r1(x), r1(y)]), t };
 }
 const vwall = (x, y0, y1, t = WALL_T) => wall([[x, y0], [x, y1]], t);
-const curveWall = (ctrl, t = WALL_T) => wall(smoothPath(ctrl), t);
+const curveWall = (ctrl, t = WALL_T) => wall(smoothPath(ctrl, 8), t);
 
 function gatePin(id, x, y, len, opts = {}) {
   return {
@@ -208,12 +211,15 @@ function pinSegment(pin) {
  * nudged further up until it genuinely clears both the gate below and the
  * next gate above.
  */
-function fillTube(rng, path, gate, gateDist, gateAbove, count, type, bore) {
+function fillTube(rng, path, gate, gateDist, gateAbove, count, type, boreAt) {
   const r = PAYLOADS[type].radius;
   const rowStep = r * 2 + 9;
   const spacing = r * 2 + 8;
-  const usable = bore - r * 2 - 28;
-  const perRow = Math.max(1, Math.min(3, Math.floor(usable / spacing) + 1));
+  const total = pathLength(path);
+  const perRowAt = (d) => {
+    const usable = boreAt(d / total) - r * 2 - 28;
+    return Math.max(1, Math.min(3, Math.floor(usable / spacing) + 1));
+  };
 
   const seg = pinSegment(gate);
   const clear = r + gate.thick / 2 + 4;
@@ -233,7 +239,7 @@ function fillTube(rng, path, gate, gateDist, gateAbove, count, type, bore) {
   let d = gateDist - (r + 16);
 
   while (placed < count) {
-    const n = Math.min(perRow, count - placed);
+    const n = Math.min(perRowAt(d), count - placed);
     let row = rowAt(d, n);
     // Push the row up until nothing in it is touching the gate rod.
     for (let guard = 0; guard < 24; guard++) {
@@ -263,13 +269,12 @@ function fillTube(rng, path, gate, gateDist, gateAbove, count, type, bore) {
  * One blade, two pits. With the blade in place the flow slides left; pull it
  * and the flow drops straight into the centre pit.
  */
-function bottomOneBlade(types, walls, pins, receivers) {
+function bottomOneBlade(types, channel, pins, receivers) {
   const [leftType, centreType] = types;
 
   // The left neck wall stops early so payloads leaving on the blade can duck
   // under it; the right one runs lower to swallow the blade's high end.
-  walls.push(vwall(NECK_L, 830, 890));
-  walls.push(vwall(NECK_R, 830, 910));
+  channel(vwall(NECK_L, 830, 890), vwall(NECK_R, 830, 910));
 
   pins.push(rampPin('blade1', 452, 916, 190, 1030));
 
@@ -279,26 +284,25 @@ function bottomOneBlade(types, walls, pins, receivers) {
   receivers.push(receiver(leftType, 118, 1042, 196, { charSide: -1 }));
   receivers.push(receiver(centreType, 357, 1046, 250, { charSide: 1 }));
 
-  return { bowlTop: 585, neckTop: 830, order: [leftType, centreType], blades: ['blade1'] };
+  return { bowlTop: 700, neckTop: 830, order: [leftType, centreType], blades: ['blade1'] };
 }
 
 /** Two stacked blades, three pits: right, then left, then centre. */
-function bottomTwoBlades(types, walls, pins, receivers) {
+function bottomTwoBlades(types, channel, pins, receivers) {
   const [rightType, leftType, centreType] = types;
 
-
-  walls.push(vwall(NECK_L, 740, 784));
-  walls.push(vwall(NECK_R, 740, 790));
+  channel(vwall(NECK_L, 740, 784), vwall(NECK_R, 740, 790));
 
   pins.push(rampPin('blade1', 265, 810, 560, 940));
   pins.push(rampPin('blade2', 452, 905, 150, 1010));
 
+  // Centre pit spans wall-to-wall between its neighbours: no perch ledges.
   receivers.push(receiver(leftType, 112, 1030, 184, { charSide: -1 }));
-  receivers.push(receiver(centreType, 356, 1035, 234, { charSide: 1 }));
+  receivers.push(receiver(centreType, 354.5, 1035, 269, { charSide: 1 }));
   receivers.push(receiver(rightType, 600, 980, 190, { charSide: 1 }));
 
   return {
-    bowlTop: 495,
+    bowlTop: 610,
     neckTop: 740,
     order: [rightType, leftType, centreType],
     blades: ['blade1', 'blade2'],
@@ -306,19 +310,20 @@ function bottomTwoBlades(types, walls, pins, receivers) {
 }
 
 /** The curved collector every tube empties into. */
-function bowl(topY, neckTop) {
+function bowl(topY, neckTop, outer) {
   const drop = neckTop - topY;
+  const span = outer - NECK_L;
   return [
     curveWall([
-      [70, topY],
-      [96, topY + drop * 0.35],
-      [160, topY + drop * 0.73],
+      [outer, topY],
+      [outer - span * 0.12, topY + drop * 0.38],
+      [outer - span * 0.55, topY + drop * 0.76],
       [NECK_L, neckTop],
     ]),
     curveWall([
-      [650, topY],
-      [624, topY + drop * 0.35],
-      [560, topY + drop * 0.73],
+      [W - outer, topY],
+      [W - outer + span * 0.12, topY + drop * 0.38],
+      [W - outer + span * 0.55, topY + drop * 0.76],
       [NECK_R, neckTop],
     ]),
   ];
@@ -338,24 +343,31 @@ function inletControls(count, exitY, rng) {
 
   if (count === 2) {
     return [
-      [[150, CHUTE_TOP + 10], [146 + j(), 360], [180 + j(), 470], [235, exitY]],
-      [[570, CHUTE_TOP + 10], [574 + j(), 360], [540 + j(), 470], [485, exitY]],
+      [[150, TUBE_TOP], [146 + j(), 380], [186 + j(), 540], [235, exitY]],
+      [[570, TUBE_TOP], [574 + j(), 380], [534 + j(), 540], [485, exitY]],
     ];
   }
   return [
-    [[112, CHUTE_TOP + 10], [110 + j(), 330], [136 + j(), 440], [178, exitY]],
+    [[112, TUBE_TOP], [110 + j(), 350], [136 + j(), 500], [178, exitY]],
     // Gentle S only. tube() will relax anything tighter than the bore can
     // take, but authoring it close to legal keeps the curve as drawn.
-    [[360, CHUTE_TOP + 10], [374 + j(), 345], [346 + j(), 455], [360, exitY]],
-    [[608, CHUTE_TOP + 10], [610 + j(), 330], [586 + j(), 440], [542, exitY]],
+    [[360, TUBE_TOP], [376 + j(), 360], [344 + j(), 505], [360, exitY]],
+    [[608, TUBE_TOP], [610 + j(), 350], [584 + j(), 500], [542, exitY]],
   ];
 }
 
 /** Where the gates sit along a tube, top of the list nearest the outlet. */
+/**
+ * Where the gates sit along a tube, nearest the outlet first.
+ *
+ * Kept high on purpose: a group stacks *up* from its gate, so a low gate
+ * leaves the reservoir empty and the vessel reads as a plain funnel. High
+ * gates fill the bulb and leave a clean run of channel below it.
+ */
 function gateFractions(n) {
-  if (n <= 1) return [0.9];
-  if (n === 2) return [0.9, 0.55];
-  return [0.92, 0.65, 0.38];
+  if (n <= 1) return [0.46];
+  if (n === 2) return [0.6, 0.34];
+  return [0.72, 0.5, 0.28];
 }
 
 /**
@@ -407,19 +419,29 @@ function gatesPerInlet(rng, level) {
 
 function buildPipeLevel(rng, level, threeWay) {
   const walls = [];
+  const tubes = [];
   const pins = [];
   const receivers = [];
   const spawns = [];
 
+  /** Register a channel: both edges become physics walls and one render pair. */
+  const channel = (left, right) => {
+    walls.push(left, right);
+    tubes.push({ left: left.points, right: right.points, t: left.t });
+  };
+
   const inletCount = threeWay ? 3 : 2;
-  const bore = threeWay ? 165 : 190;
-  const types = distinctTypes(rng, level, inletCount, bore);
+  // A wide reservoir up top narrowing into a channel — the flask silhouette.
+  const bulbHalf = threeWay ? 95 : 108;
+  const spoutHalf = 65;
+  const types = distinctTypes(rng, level, inletCount, bulbHalf * 2);
 
   const bottom = threeWay
-    ? bottomTwoBlades(types, walls, pins, receivers)
-    : bottomOneBlade(types, walls, pins, receivers);
+    ? bottomTwoBlades(types, channel, pins, receivers)
+    : bottomOneBlade(types, channel, pins, receivers);
 
-  walls.push(...bowl(bottom.bowlTop, bottom.neckTop));
+  const [bowlL, bowlR] = bowl(bottom.bowlTop, bottom.neckTop, threeWay ? 100 : 150);
+  channel(bowlL, bowlR);
 
   const exitY = bottom.bowlTop - 12;
   const controls = inletControls(inletCount, exitY, rng);
@@ -430,18 +452,21 @@ function buildPipeLevel(rng, level, threeWay) {
   const gatesByType = {};
   for (let i = 0; i < inletCount; i++) {
     const t = types[i];
-    const built = tube(controls[i], bore, WALL_T, 14);
-    assertBore(level, i, built, bore);
-    walls.push(...built.walls.map((w) => wall(w.points, w.t)));
+    const built = vessel(controls[i], bulbHalf, spoutHalf, 0.42, WALL_T, 9);
+    assertBore(level, i, built, spoutHalf * 2);
+    channel(wall(built.walls[0].points, WALL_T), wall(built.walls[1].points, WALL_T));
 
     const len = pathLength(built.path);
-    const gates = fractions.map((f, gi) => gateAcross(`g${i}_${gi}`, built.path, len * f, bore));
+    const boreAt = (f) => built.halfAt(f) * 2;
+    const gates = fractions.map((f, gi) =>
+      gateAcross(`g${i}_${gi}`, built.path, len * f, boreAt(f))
+    );
     pins.push(...gates);
 
     gates.forEach((gate, gi) => {
       spawns.push(
         fillTube(rng, built.path, gate, len * fractions[gi], gates[gi + 1] || null,
-          groupSize(rng, level), t, bore)
+          groupSize(rng, level), t, boreAt)
       );
     });
     gatesByType[t] = gates.map((g) => g.id);
@@ -454,7 +479,7 @@ function buildPipeLevel(rng, level, threeWay) {
     if (bottom.blades[stage]) solution.push(bottom.blades[stage]);
   });
 
-  return { family: threeWay ? 'sort' : 'flow', walls, pins, receivers, spawns, solution };
+  return { family: threeWay ? 'sort' : 'flow', walls, tubes, pins, receivers, spawns, solution };
 }
 
 /** Bonus level: a hopper of coins tumbling through pegs into the vault. */
@@ -465,17 +490,25 @@ function buildVault(rng, level) {
   const spawns = [];
   const pegs = [];
 
+  const tubes = [];
+  const channel = (left, right) => {
+    walls.push(left, right);
+    tubes.push({ left: left.points, right: right.points, t: left.t });
+  };
+
   // Curved hopper shoulders funnelling into a straight neck.
-  walls.push(curveWall([[64, CHUTE_TOP], [64, 430], [140, 590], [300, 690]]));
-  walls.push(curveWall([[656, CHUTE_TOP], [656, 430], [580, 590], [420, 690]]));
-  walls.push(vwall(300, 690, 760));
-  walls.push(vwall(420, 690, 760));
+  channel(
+    curveWall([[64, CHUTE_TOP], [64, 430], [140, 590], [300, 690]]),
+    curveWall([[656, CHUTE_TOP], [656, 430], [580, 590], [420, 690]])
+  );
+  channel(vwall(300, 690, 760), vwall(420, 690, 760));
 
   // Peg corridor, opening into a wide vault mouth so coins never bridge.
-  walls.push(vwall(96, 760, 1000));
-  walls.push(vwall(624, 760, 1000));
-  walls.push(curveWall([[96, 1000], [130, 1046], [214, 1070]]));
-  walls.push(curveWall([[624, 1000], [590, 1046], [506, 1070]]));
+  channel(vwall(96, 760, 1000), vwall(624, 760, 1000));
+  channel(
+    curveWall([[96, 1000], [130, 1046], [214, 1070]]),
+    curveWall([[624, 1000], [590, 1046], [506, 1070]])
+  );
 
   // Peg columns are kept well clear of the corridor walls: a coin wedged
   // between a peg and the wall would stall the whole cascade.
@@ -510,7 +543,7 @@ function buildVault(rng, level) {
   // cascade is enough, and every extra coin is still paid out.
   receivers.push(receiver('coin', 360, 1074, 300, { charSide: 1, quota: 0.55 }));
 
-  return { family: 'vault', walls, pins, receivers, spawns, pegs, solution };
+  return { family: 'vault', walls, tubes, pins, receivers, spawns, pegs, solution };
 }
 
 function buildLevel(level) {
@@ -557,6 +590,7 @@ function buildLevel(level) {
     reward: isBonus ? 0 : 18 + Math.floor(level / 4) * 4,
     family: core.family,
     walls: core.walls,
+    tubes: core.tubes || [],
     pegs: core.pegs || [],
     pins: core.pins,
     spawns: core.spawns,

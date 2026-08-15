@@ -80,16 +80,20 @@ export default class Pin {
       g.fillCircle(x, halfT * 0.35, thick * 0.11);
     }
 
-    // Pull knob on the exposed end.
-    const kx = this.knobSide * (half + thick * 0.28);
-    g.fillStyle(METAL_DARK, 1);
-    g.fillCircle(kx, 0, thick * 0.82);
-    g.fillStyle(this.locked ? UI.slateLight : UI.gold, 1);
-    g.fillCircle(kx, 0, thick * 0.66);
-    g.fillStyle(0xffffff, 0.45);
-    g.fillCircle(kx - thick * 0.18, -thick * 0.2, thick * 0.24);
-    g.fillStyle(METAL_DARK, 0.9);
-    g.fillCircle(kx, 0, thick * 0.24);
+    // Ring handle on the exposed end — the thing you actually grab.
+    const ringR = thick * 1.05;
+    const kx = this.knobSide * (half + ringR * 0.9);
+    const ink = this.locked ? UI.slateLight : METAL_LIGHT;
+
+    g.lineStyle(thick * 0.42, METAL_DARK, 1);
+    g.strokeCircle(kx, 2, ringR);
+    g.lineStyle(thick * 0.32, ink, 1);
+    g.strokeCircle(kx, 0, ringR);
+    // Highlight along the upper-left of the ring.
+    g.lineStyle(thick * 0.14, 0xffffff, 0.7);
+    g.beginPath();
+    g.arc(kx, 0, ringR, Math.PI * 1.05, Math.PI * 1.75);
+    g.strokePath();
   }
 
   _draw() {
@@ -108,7 +112,8 @@ export default class Pin {
 
     this.gfx = g;
     this.container.add([glow, g]);
-    const kx = this.knobSide * (half + thick * 0.28);
+    const ringR = thick * 1.05;
+    const kx = this.knobSide * (half + ringR * 0.9);
 
     if (this.locked) {
       this.lockIcon = this.scene.add.image(kx, 0, 'ui_lock').setScale(0.42).setTint(0xffffff);
@@ -116,16 +121,12 @@ export default class Pin {
       glow.setAlpha(0.25);
     }
 
-    // Generous hit area: the rod plus finger-friendly padding around it.
-    const padY = 22;
-    this.container.setSize(len + thick * 2, thick + padY * 2);
+    // Generous hit area: the rod, both ring ends, and finger-friendly padding.
+    const padY = 24;
+    const padX = ringR * 2.2;
+    this.container.setSize(len + padX * 2, thick + padY * 2);
     this.container.setInteractive(
-      new Phaser.Geom.Rectangle(
-        -half - thick,
-        -halfT - padY,
-        len + thick * 2,
-        thick + padY * 2
-      ),
+      new Phaser.Geom.Rectangle(-half - padX, -halfT - padY, len + padX * 2, thick + padY * 2),
       Phaser.Geom.Rectangle.Contains
     );
     this.container.input.cursor = 'pointer';

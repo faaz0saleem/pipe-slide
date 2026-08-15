@@ -79,7 +79,7 @@ export default class GameScene extends Phaser.Scene {
 
     this._buildWorldBounds();
 
-    this.pipes = new PipeSystem(this, lv.walls, lv.pegs, save.equippedId('pipe'));
+    this.pipes = new PipeSystem(this, lv.walls, lv.pegs, save.equippedId('pipe'), lv.tubes);
 
     this._buildReceivers();
     this._buildPins();
