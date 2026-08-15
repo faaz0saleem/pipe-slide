@@ -121,19 +121,38 @@ export default class Pin {
       glow.setAlpha(0.25);
     }
 
-    // Generous hit area: the rod, both ring ends, and finger-friendly padding.
-    const padY = 24;
-    const padX = ringR * 2.2;
-    this.container.setSize(len + padX * 2, thick + padY * 2);
-    this.container.setInteractive(
-      new Phaser.Geom.Rectangle(-half - padX, -halfT - padY, len + padX * 2, thick + padY * 2),
-      Phaser.Geom.Rectangle.Contains
-    );
-    this.container.input.cursor = 'pointer';
+    /*
+     * Hit area.
+     *
+     * A rotated Container with a hand-built Rectangle hit area does not work:
+     * Phaser normalises the pointer against the object's display origin, which
+     * a Container does not define, so the test silently fails and most of the
+     * rod is dead to the touch. An interactive Zone *inside* the container has
+     * a real origin and inherits the container's rotation, so the whole rod —
+     * and the ring you actually reach for — is grabbable.
+     */
+    /*
+     * Keep the zone hugging the rod. A generous pad sounds friendlier but on a
+     * four-pipe board the gates are longer than the gap between pipes, so fat
+     * zones blanket their neighbours and — because Phaser delivers to the
+     * top-most object only — leave whole rods unclickable.
+     */
+    const padY = 13;
+    const padX = ringR * 1.5;
+    this.hit = this.scene.add.zone(0, 0, len + padX * 2, thick + padY * 2);
+    this.hit.setInteractive({ useHandCursor: true });
+    this.container.add(this.hit);
+
+    // World-space endpoints of the rod, for the scene's nearest-rod picking.
+    const rad = Phaser.Math.DegToRad(this.def.angle);
+    const ex = Math.cos(rad) * (half + ringR);
+    const ey = Math.sin(rad) * (half + ringR);
+    this.segment = [this.def.x - ex, this.def.y - ey, this.def.x + ex, this.def.y + ey];
+    this.grabRadius = thick / 2 + 24;
   }
 
   _attachInput() {
-    const c = this.container;
+    const c = this.hit;
     c.on('pointerover', () => {
       if (this.pulled) return;
       this.scene.tweens.add({ targets: this.glow, alpha: 1, duration: 140 });
@@ -142,7 +161,9 @@ export default class Pin {
       if (this.pulled) return;
       this.scene.tweens.add({ targets: this.glow, alpha: this.locked ? 0.25 : 0.6, duration: 180 });
     });
-    c.on('pointerdown', () => this.tryPull());
+    // Deliberately no pointerdown here: pulls are routed by GameScene, which
+    // picks the nearest rod. Overlapping zones would otherwise make whichever
+    // pin happens to sit on top the only one you can grab.
   }
 
   _idleAnim() {
@@ -208,7 +229,7 @@ export default class Pin {
     this.scene.matter.world.remove(this.body);
     this.body = null;
 
-    this.container.disableInteractive();
+    this.hit.disableInteractive();
     this._idle?.stop();
 
     const { out, len } = this.def;

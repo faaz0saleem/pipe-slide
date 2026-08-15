@@ -25,6 +25,15 @@ import { floatText, label } from '../ui/Ui.js';
 
 const { Sleeping } = Phaser.Physics.Matter.Matter;
 
+/** Closest point on a line segment to (px, py). */
+function nearestOnSegment(px, py, [x0, y0, x1, y1]) {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len2 = dx * dx + dy * dy || 1;
+  const t = Math.max(0, Math.min(1, ((px - x0) * dx + (py - y0) * dy) / len2));
+  return { x: x0 + t * dx, y: y0 + t * dy };
+}
+
 const COMBO_WINDOW = 1100;
 // Matter velocities are px per 60Hz step, so free-fall peaks around 18 and a
 // payload gliding down a blade sits near 4. Anything above walking pace means
@@ -92,6 +101,8 @@ export default class GameScene extends Phaser.Scene {
     // the overlap persists is what actually lands the delivery.
     this.matter.world.on('collisionactive', this._onCollisionActive, this);
 
+    this._routePinTaps();
+
     this.scene.launch('Hud', { levelId: this.levelId });
     this.hud = this.scene.get('Hud');
     this._wireHud();
@@ -150,6 +161,35 @@ export default class GameScene extends Phaser.Scene {
       c.receiverId = def.id;
       this.characters.push(c);
     }
+  }
+
+  /**
+   * Route taps to the nearest rod.
+   *
+   * Gates are longer than the gap between pipes, so their hit zones overlap
+   * heavily and Phaser only ever delivers to the top-most one — which left
+   * whole rods unpullable depending on z-order. Picking by distance to the rod
+   * itself is unambiguous and matches what the player is aiming at.
+   */
+  _routePinTaps() {
+    this.input.on('pointerdown', (pointer) => {
+      if (this.finished) return;
+
+      let best = null;
+      let bestDist = Infinity;
+      for (const pin of this.pins) {
+        if (pin.pulled || !pin.segment) continue;
+        const d = Phaser.Math.Distance.BetweenPointsSquared(
+          { x: pointer.worldX, y: pointer.worldY },
+          nearestOnSegment(pointer.worldX, pointer.worldY, pin.segment)
+        );
+        if (d < bestDist) {
+          bestDist = d;
+          best = pin;
+        }
+      }
+      if (best && bestDist <= best.grabRadius * best.grabRadius) best.tryPull();
+    });
   }
 
   _buildPins() {
