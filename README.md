@@ -9,7 +9,9 @@ pipes into the pits that want them — and never into the ones that don't.
 - **100 generated-and-proven levels** across 10 themed chapters. Each is a set
   of curved glass vessels — a bulb reservoir narrowing into a winding channel —
   feeding a collector, a neck, and removable diverter blades that decide which
-  pit the flow lands in. Pin count scales with the level (3 at L1, 8 at L99).
+  pit the flow lands in. Difficulty climbs on an explicit ladder — 2 pipes and
+  one gate each at the start, up to the maximum of 4 pipes with three gates
+  each by the end — so pin count rises from 3 at L1 to 14 at L99.
   Every tenth level is a bonus **Coin Rush**: a hopper of coins cascading
   through a peg field into a vault.
 - **Physics that's been played**: `npm run simulate` rebuilds each level in

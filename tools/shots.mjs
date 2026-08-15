@@ -1,4 +1,10 @@
-/** Capture PNGs of a few scenes so the art can be reviewed without playing. */
+/**
+ * Capture PNGs of a few scenes so the art can be reviewed without playing.
+ *
+ * The waits are generous on purpose: headless chromium runs on software GL at
+ * a few frames a second, and a heavy scene will screenshot blank if you grab
+ * it before its first frame lands.
+ */
 import { chromium } from 'playwright-core';
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -15,7 +21,7 @@ await new Promise(r=>server.listen(4199,r));
 mkdirSync('shots',{recursive:true});
 
 const browser = await chromium.launch({ executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args:['--no-sandbox','--enable-unsafe-swiftshader'] });
-const page = await browser.newPage({ viewport:{width:760,height:1300}, deviceScaleFactor:1 });
+const page = await browser.newPage({ viewport:{width:1280,height:800}, deviceScaleFactor:1 });
 page.on('pageerror', (e) => console.log('PAGEERROR:', e.message));
 page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('Failed to load')) console.log('CONSOLE:', m.text()); });
 await page.goto('http://127.0.0.1:4199/');
@@ -23,7 +29,7 @@ await page.waitForTimeout(3000);
 
 const shot = async (name, setup, settleSteps=0) => {
   await page.evaluate(setup, name.startsWith('level-') ? Number(name.split('-')[1]) : 0);
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(6000);
   await page.waitForTimeout(1500);
   if (settleSteps) {
     await page.evaluate((n)=>{ const gs=window.game.scene.getScene('Game');
@@ -36,7 +42,7 @@ const shot = async (name, setup, settleSteps=0) => {
 };
 
 await shot('menu', () => undefined);
-for (const id of [1, 14, 30]) {
+for (const id of [1, 30, 60, 95]) {
   await shot(`level-${id}`, (lv)=>{ const g=window.game;
     g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Game',{levelId:lv}); }, 90);
 }

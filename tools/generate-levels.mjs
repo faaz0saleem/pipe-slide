@@ -111,6 +111,7 @@ const CHAPTERS = [
 
 const NAME_PARTS = {
   flow: ['First Drop', 'Twin Spouts', 'The Diverter', 'Slide Away', 'Switchback', 'Two Ways Out', 'Bend and Drop', 'Crossflow', 'Siphon', 'Down the Loop'],
+  manifold: ['The Manifold', 'Four Spouts', 'Quad Sort', 'Crossroads', 'Grand Junction', 'Full House', 'Four Ways Down', 'The Refinery'],
   sort: ['Triple Sort', 'Sorting Tower', 'Three Ramps', 'Cascade Control', 'Order of Operations', 'Master Sorter', 'The Manifold', 'Trident', 'Three Spouts'],
   vault: ['Coin Rush', 'Golden Hour', 'Vault Breaker', 'Jackpot', 'Treasure Cascade', 'Midas Drop', 'Bullion Run', 'Piggy Bank', 'Mint Condition', 'The Big Payout'],
 };
@@ -156,13 +157,27 @@ function rampPin(id, x0, y0, x1, y1, opts = {}) {
   };
 }
 
-/** A gate sitting square across a curved tube at `dist` along its centre-line. */
+/**
+ * A gate sitting square across a curved tube at `dist` along its centre-line.
+ *
+ * The rod's ring handle is what the player grabs, so it has to stay on screen:
+ * on the outermost pipes the natural "point at the nearer edge" choice hangs
+ * the ring off the side of the board where it cannot be seen or clicked.
+ */
 function gateAcross(id, path, dist, bore) {
   const { point, normal } = atDistance(path, dist);
   const angle = (Math.atan2(normal[1], normal[0]) * 180) / Math.PI;
-  // Slide the rod out towards whichever screen edge is nearer.
-  const sign = point[0] < W / 2 ? (normal[0] < 0 ? 1 : -1) : normal[0] > 0 ? 1 : -1;
-  return gatePin(id, point[0], point[1], bore + 34, {
+  const len = bore + 34;
+
+  // Where the ring ends up for each choice of pull direction.
+  const reach = len / 2 + 26;
+  const ringX = (sign) => point[0] + normal[0] * sign * reach;
+  const onScreen = (x) => x > 22 && x < W - 22;
+
+  let sign = point[0] < W / 2 ? (normal[0] < 0 ? 1 : -1) : normal[0] > 0 ? 1 : -1;
+  if (!onScreen(ringX(sign)) && onScreen(ringX(-sign))) sign = -sign;
+
+  return gatePin(id, point[0], point[1], len, {
     angle,
     out: [r1(normal[0] * sign), r1(normal[1] * sign)],
   });
@@ -347,12 +362,22 @@ function inletControls(count, exitY, rng) {
       [[570, TUBE_TOP], [574 + j(), 380], [534 + j(), 540], [485, exitY]],
     ];
   }
+  if (count === 3) {
+    return [
+      [[112, TUBE_TOP], [110 + j(), 350], [136 + j(), 500], [178, exitY]],
+      // Gentle S only. vessel() will relax anything tighter than the bore can
+      // take, but authoring it close to legal keeps the curve as drawn.
+      [[360, TUBE_TOP], [376 + j(), 360], [344 + j(), 505], [360, exitY]],
+      [[608, TUBE_TOP], [610 + j(), 350], [584 + j(), 500], [542, exitY]],
+    ];
+  }
+  // Four is the ceiling: any more and the reservoirs cannot stay wide enough
+  // to keep payloads from arching across them.
   return [
-    [[112, TUBE_TOP], [110 + j(), 350], [136 + j(), 500], [178, exitY]],
-    // Gentle S only. tube() will relax anything tighter than the bore can
-    // take, but authoring it close to legal keeps the curve as drawn.
-    [[360, TUBE_TOP], [376 + j(), 360], [344 + j(), 505], [360, exitY]],
-    [[608, TUBE_TOP], [610 + j(), 350], [584 + j(), 500], [542, exitY]],
+    [[92, TUBE_TOP], [92 + j(), 350], [116 + j(), 500], [150, exitY]],
+    [[266, TUBE_TOP], [274 + j(), 360], [258 + j(), 505], [290, exitY]],
+    [[454, TUBE_TOP], [446 + j(), 360], [462 + j(), 505], [430, exitY]],
+    [[628, TUBE_TOP], [628 + j(), 350], [604 + j(), 500], [570, exitY]],
   ];
 }
 
@@ -402,7 +427,7 @@ function slackFor(level) {
   if (level <= 5) return 0;
   if (level <= 30) return 1;
   if (level <= 70) return 2;
-  return 3;
+  return 4;
 }
 
 function groupSize(rng, level) {
@@ -411,13 +436,22 @@ function groupSize(rng, level) {
   return irange(rng, 4, 5);
 }
 
-function gatesPerInlet(rng, level) {
-  if (level <= 8) return 1;
-  if (level <= 40) return 2;
-  return rng() < 0.5 ? 2 : 3;
+/**
+ * The difficulty ladder. Pipes and gates both climb with the level, so the
+ * pin count rises monotonically from 3 to 11 across the run.
+ */
+function difficultyFor(level, rng) {
+  if (level <= 6) return { pipes: 2, gates: 1 };
+  if (level <= 15) return { pipes: 2, gates: 2 };
+  if (level <= 26) return { pipes: 3, gates: rng() < 0.4 ? 1 : 2 };
+  if (level <= 42) return { pipes: 3, gates: 2 };
+  if (level <= 58) return { pipes: 3, gates: rng() < 0.5 ? 2 : 3 };
+  if (level <= 74) return { pipes: 4, gates: 2 };
+  if (level <= 88) return { pipes: 4, gates: rng() < 0.5 ? 2 : 3 };
+  return { pipes: 4, gates: 3 };
 }
 
-function buildPipeLevel(rng, level, threeWay) {
+function buildPipeLevel(rng, level, pipes, gateCount) {
   const walls = [];
   const tubes = [];
   const pins = [];
@@ -430,28 +464,46 @@ function buildPipeLevel(rng, level, threeWay) {
     tubes.push({ left: left.points, right: right.points, t: left.t });
   };
 
-  const inletCount = threeWay ? 3 : 2;
+  const inletCount = pipes;
   // A wide reservoir up top narrowing into a channel — the flask silhouette.
-  const bulbHalf = threeWay ? 95 : 108;
-  const spoutHalf = 65;
-  const types = distinctTypes(rng, level, inletCount, bulbHalf * 2);
+  const bulbHalf = { 2: 108, 3: 95, 4: 78 }[inletCount];
+  const spoutHalf = inletCount === 4 ? 56 : 65;
 
-  const bottom = threeWay
-    ? bottomTwoBlades(types, channel, pins, receivers)
-    : bottomOneBlade(types, channel, pins, receivers);
+  // Two pits or three. With four pipes one pit is fed by two of them, which
+  // is what keeps the routing on the proven bottom geometry.
+  const pitCount = inletCount === 2 ? 2 : 3;
+  const pitTypes = distinctTypes(rng, level, pitCount, bulbHalf * 2);
 
-  const [bowlL, bowlR] = bowl(bottom.bowlTop, bottom.neckTop, threeWay ? 100 : 150);
+  // Which type each pipe carries. When a type is doubled up, its two pipes sit
+  // side by side so they drain at the same rate — split them across the board
+  // and the far one lags behind the blade flip and misroutes.
+  const carried = [];
+  const doubled = inletCount > pitCount ? Math.floor(rng() * pitCount) % pitCount : -1;
+  pitTypes.forEach((t, i) => {
+    carried.push(t);
+    if (i === doubled) carried.push(t);
+  });
+
+  const bottom =
+    pitCount === 2
+      ? bottomOneBlade(pitTypes, channel, pins, receivers)
+      : bottomTwoBlades(pitTypes, channel, pins, receivers);
+
+  const [bowlL, bowlR] = bowl(
+    bottom.bowlTop,
+    bottom.neckTop,
+    { 2: 150, 3: 100, 4: 80 }[inletCount]
+  );
   channel(bowlL, bowlR);
 
   const exitY = bottom.bowlTop - 12;
   const controls = inletControls(inletCount, exitY, rng);
-  const gateCount = gatesPerInlet(rng, level);
   const fractions = gateFractions(gateCount);
 
   // Each inlet: a curved tube, its gates, and a payload group behind each gate.
   const gatesByType = {};
   for (let i = 0; i < inletCount; i++) {
-    const t = types[i];
+    const t = carried[i];
     const built = vessel(controls[i], bulbHalf, spoutHalf, 0.42, WALL_T, 9);
     assertBore(level, i, built, spoutHalf * 2);
     channel(wall(built.walls[0].points, WALL_T), wall(built.walls[1].points, WALL_T));
@@ -469,7 +521,8 @@ function buildPipeLevel(rng, level, threeWay) {
           groupSize(rng, level), t, boreAt)
       );
     });
-    gatesByType[t] = gates.map((g) => g.id);
+    // Two pipes can feed the same pit, so append rather than replace.
+    gatesByType[t] = (gatesByType[t] || []).concat(gates.map((g) => g.id));
   }
 
   // Release one inlet per blade stage, pulling its gates bottom-up.
@@ -479,7 +532,8 @@ function buildPipeLevel(rng, level, threeWay) {
     if (bottom.blades[stage]) solution.push(bottom.blades[stage]);
   });
 
-  return { family: threeWay ? 'sort' : 'flow', walls, tubes, pins, receivers, spawns, solution };
+  const family = inletCount === 2 ? 'flow' : inletCount === 3 ? 'sort' : 'manifold';
+  return { family, walls, tubes, pins, receivers, spawns, solution };
 }
 
 /** Bonus level: a hopper of coins tumbling through pegs into the vault. */
@@ -550,9 +604,12 @@ function buildLevel(level) {
   const rng = mulberry32(level * 7919 + 13);
 
   let core;
-  if (level % 10 === 0) core = buildVault(rng, level);
-  else if (level <= 6) core = buildPipeLevel(rng, level, false);
-  else core = buildPipeLevel(rng, level, level >= 12 && rng() < 0.55);
+  if (level % 10 === 0) {
+    core = buildVault(rng, level);
+  } else {
+    const { pipes, gates } = difficultyFor(level, rng);
+    core = buildPipeLevel(rng, level, pipes, gates);
+  }
 
   // Pits ask for everything that spawns, minus the spare items.
   const totals = {};
@@ -561,9 +618,12 @@ function buildLevel(level) {
   const isBonus = core.family === 'vault';
   for (const r of core.receivers) {
     const available = totals[r.accepts] || 0;
-    // Spare items are capped at a third of the group: enough to absorb a
-    // mistake, never enough to make the pit trivial.
-    const slack = isBonus ? 0 : Math.min(slackFor(level), Math.floor(available / 3));
+    // Spare items are capped as a fraction of the group: enough to absorb a
+    // mistake, never enough to make the pit trivial. Four-pipe levels move a
+    // lot more material through one bowl, so stragglers are likelier and the
+    // allowance is a little wider.
+    const cap = core.family === 'manifold' ? available / 2 : available / 3;
+    const slack = isBonus ? 0 : Math.min(slackFor(level), Math.floor(cap));
     r.required = isBonus
       ? Math.max(1, Math.round(available * r.quota))
       : Math.max(2, available - slack);

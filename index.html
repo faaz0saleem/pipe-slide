@@ -36,11 +36,13 @@
         -webkit-tap-highlight-color: transparent;
         font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
       }
+      /* No centring here on purpose: Phaser's Scale.CENTER_BOTH sets the
+         canvas margins itself, and centring the canvas again with grid/flex
+         stacks the two offsets and pushes the game off to one side. */
       #app {
         position: fixed;
         inset: 0;
-        display: grid;
-        place-items: center;
+        overflow: hidden;
         background:
           radial-gradient(1200px 700px at 50% -10%, #3a2a6b 0%, transparent 60%),
           radial-gradient(900px 600px at 10% 110%, #123a52 0%, transparent 55%),
