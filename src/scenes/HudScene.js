@@ -35,6 +35,7 @@ export default class HudScene extends Phaser.Scene {
     this._comboBadge();
 
     this.events.on('progress', (v) => this.bar.setValue(v));
+    this.events.on('wasted', (n) => this._showWasted(n));
     this.events.on('coins-preview', (n) => this._previewCoins(n));
     this.events.on('hint-result', (r) => this._hintFeedback(r));
 
@@ -45,6 +46,7 @@ export default class HudScene extends Phaser.Scene {
       this.events.off('progress');
       this.events.off('coins-preview');
       this.events.off('hint-result');
+      this.events.off('wasted');
     });
   }
 
@@ -129,6 +131,20 @@ export default class HudScene extends Phaser.Scene {
       strokeWidth: 6,
     });
     this.comboText.setDepth(DEPTH.hud + 1).setAlpha(0);
+  }
+
+  _showWasted(n) {
+    if (!this.wastedText) {
+      this.wastedText = label(this, WIDTH / 2, 146, '', {
+        size: 20,
+        color: '#ff8fa3',
+        stroke: '#2a0009',
+        strokeWidth: 4,
+      }).setDepth(DEPTH.hud + 1);
+    }
+    this.wastedText.setText(`${n} wasted`);
+    this.wastedText.setScale(1.35);
+    this.tweens.add({ targets: this.wastedText, scale: 1, duration: 260, ease: 'Back.out' });
   }
 
   _previewCoins(n) {

@@ -78,9 +78,10 @@ for (const lv of doc.levels) {
     if (r.required > available) {
       errors.push(at(`pit ${r.kind} wants ${r.required} but only ${available} spawn`));
     }
-    // Only bonus pits are allowed to ask for less than everything.
-    if (!lv.bonus && r.required !== available) {
-      errors.push(at(`pit ${r.kind} wants ${r.required} of ${available} in a non-bonus level`));
+    // Non-bonus pits leave a few spare items so a wrong pull wastes rather
+    // than dead-ends, but they must still ask for most of the group.
+    if (!lv.bonus && r.required < Math.ceil(available * 0.45)) {
+      errors.push(at(`pit ${r.kind} only wants ${r.required} of ${available} — too generous`));
     }
     if (r.required === 0) errors.push(at(`pit ${r.kind} has nothing to catch`));
     if (r.x - r.w / 2 < -4 || r.x + r.w / 2 > doc.world.width + 4) {

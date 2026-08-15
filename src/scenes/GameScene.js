@@ -382,14 +382,8 @@ export default class GameScene extends Phaser.Scene {
     payload.consume();
     receiver.reject(x, y);
 
-    if (this.level.noFail) {
-      this.perfect = false;
-      return;
-    }
-
-    this.cameras.main.shake(320, 0.014);
-    this.cameras.main.flash(220, 120, 0, 30);
-    this._fail(`${PAYLOAD_STYLE[payload.type].label} in the ${receiver.style.label}!`);
+    this.cameras.main.shake(180, 0.007);
+    this._waste(payload.type, x, y, `Wrong pit!`);
   }
 
   _losePayload(payload) {
@@ -397,42 +391,74 @@ export default class GameScene extends Phaser.Scene {
     // A payload resting inside a pit is the pit's business, not a loss.
     if (this.receivers.some((r) => r.contains(payload.x, payload.y))) return;
 
-    payload.resolved = true;
-    this.lostCount++;
-    this.perfect = false;
-
     const x = payload.x;
     const y = payload.y;
+    payload.resolved = true;
     payload.destroy();
     this._wakeNear(x, y);
 
+    this._waste(payload.type, x, y, 'Missed!');
+  }
+
+  /**
+   * A payload went somewhere it shouldn't have.
+   *
+   * Wasting is a cost, not an instant loss: every group spawns with spare
+   * items, so a mistake burns slack and upsets the person who was waiting for
+   * it. The level is only lost once a pit can no longer reach its quota.
+   */
+  _waste(type, x, y, reason) {
+    this.lostCount++;
+    this.perfect = false;
+
+    const receiver = this.receivers.find((r) => r.accepts === type);
+    receiver?.noteWaste();
+
+    // The customer who was expecting this item is the one who reacts.
+    const owner = this.characters.find((c) => c.receiverId === receiver?.def.id);
+    owner?.disappoint();
+
     const puff = this.add.particles(x, y, 'fx_dot', {
-      speed: { min: 30, max: 120 },
-      scale: { start: 0.4, end: 0 },
-      alpha: { start: 0.7, end: 0 },
-      lifespan: 420,
-      quantity: 8,
-      tint: 0x8892be,
+      speed: { min: 40, max: 150 },
+      scale: { start: 0.45, end: 0 },
+      alpha: { start: 0.8, end: 0 },
+      lifespan: 460,
+      quantity: 10,
+      tint: [0x8892be, 0x5a648f],
     });
     puff.setDepth(DEPTH.fx);
-    puff.explode(8);
-    this.time.delayedCall(600, () => puff.destroy());
+    puff.explode(10);
+    this.time.delayedCall(700, () => puff.destroy());
+
+    floatText(this, x, y - 26, reason, { color: '#ff8fa3', size: 26, depth: DEPTH.popup });
+    sound.play('error');
 
     if (this.level.noFail) return;
 
-    // Forgive the miss rather than hard-failing: the level stays winnable and
-    // the player only loses the "perfect" star.
-    const receiver = this.receivers.find((r) => r.accepts === payload.type);
-    if (receiver) {
-      receiver.forgive();
-      floatText(this, receiver.x, receiver.top - 90, 'MISSED', {
-        color: '#ff8fa3',
-        size: 26,
-        depth: DEPTH.popup,
-      });
-      this.hud?.events.emit('progress', this._progressRatio());
-      this._checkWin();
+    this.hud?.events.emit('progress', this._progressRatio());
+    this.hud?.events.emit('wasted', this.lostCount);
+    if (!this._checkRanOut()) this._checkWin();
+  }
+
+  /** How many of a type are still in play. */
+  _aliveOf(type) {
+    return this.payloads.filter((p) => !p.resolved && p.sprite && p.type === type).length;
+  }
+
+  /**
+   * Fail only when a pit provably cannot be filled any more — that is the
+   * moment the run is actually over, rather than the first mistake.
+   * @returns {boolean} true if the level was failed.
+   */
+  _checkRanOut() {
+    if (this.finished || this.level.noFail) return false;
+    for (const r of this.receivers) {
+      if (r.delivered + this._aliveOf(r.accepts) < r.required) {
+        this._fail(`Not enough ${PAYLOAD_STYLE[r.accepts].label.toLowerCase()} left!`);
+        return true;
+      }
     }
+    return false;
   }
 
   _progressRatio() {
@@ -653,22 +679,20 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    // Nothing can move again, so a payload wedged on a rim is the physics
-    // engine's fault rather than the player's. Write those off the same way a
-    // missed item is written off — it costs the perfect star but never leaves
-    // the board in an unwinnable state. Only fail if that still isn't enough.
+    // Nothing can move again, so anything still wedged in the glass is spent.
+    // Write it off as waste and see whether the quotas were met anyway.
     for (const p of alive) {
-      const receiver = this.receivers.find((r) => r.accepts === p.type);
-      if (!receiver || !receiver.forgive()) continue;
+      const x = p.x;
+      const y = p.y;
+      const type = p.type;
       p.resolved = true;
-      this.lostCount++;
-      this.perfect = false;
       p.destroy();
+      this._waste(type, x, y, 'Stuck!');
+      if (this.finished) return;
     }
-    this.hud?.events.emit('progress', this._progressRatio());
 
     if (this.receivers.every((r) => r.isSatisfied)) this._win();
-    else this._fail(alive.length ? 'Some items got stuck!' : 'Not everything was delivered');
+    else this._fail('Not everything was delivered');
   }
 
   shutdown() {

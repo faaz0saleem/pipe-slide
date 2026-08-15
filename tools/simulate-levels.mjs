@@ -275,7 +275,11 @@ function simulate(lv, { verbose = false } = {}) {
       .slice(0, 8)
       .map((p) => `${p.type}@${p.body.position.x.toFixed(0)},${p.body.position.y.toFixed(0)}`),
   };
-  report.solved = wrong === 0 && receivers.every((r) => r.delivered >= r.def.required);
+  // A wrong pit or a dropped item is now a cost, not an instant loss: every
+  // group spawns spare items. A level is solved when each pit meets its quota.
+  report.solved = receivers.every((r) => r.delivered >= r.def.required);
+  // A level whose own hint order wastes anything is a level whose hint lies.
+  report.clean = report.solved && wrong === 0 && lost === 0;
   if (verbose) console.log(JSON.stringify(report, null, 2));
   return report;
 }
@@ -286,6 +290,7 @@ const args = process.argv.slice(2).map(Number).filter(Boolean);
 const targets = args.length ? doc.levels.filter((l) => args.includes(l.id)) : doc.levels;
 
 const failures = [];
+const messy = [];
 const t0 = Date.now();
 
 for (const lv of targets) {
@@ -298,8 +303,9 @@ for (const lv of targets) {
         `${r.wrong ? `  wrong:${r.wrongDetail.join(',')}` : ''}` +
         `${r.lost ? `  lost:${r.lost}` : ''}${r.stuck ? `  stuck:${r.stuck}` : ''}`
     );
-  } else if (args.length) {
-    console.log(`L${r.id} ${r.family} OK`);
+  } else {
+    if (!r.clean) messy.push(r);
+    if (args.length) console.log(`L${r.id} ${r.family} OK${r.clean ? ' (clean)' : ''}`);
   }
 }
 
@@ -307,4 +313,13 @@ const secs = ((Date.now() - t0) / 1000).toFixed(1);
 console.log(
   `\n${targets.length - failures.length}/${targets.length} levels solved by their recorded hint order (${secs}s)`
 );
+if (messy.length) {
+  console.log(
+    `${messy.length} solved but wasted something following their own hint:\n  ` +
+      messy
+        .slice(0, 12)
+        .map((r) => `L${r.id} ${r.wrong ? `wrong:${r.wrongDetail.join(',')}` : ''}${r.lost ? ` lost:${r.lost}` : ''}`)
+        .join('\n  ')
+  );
+}
 if (failures.length) process.exit(1);

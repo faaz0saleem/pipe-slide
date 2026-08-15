@@ -21,6 +21,7 @@ export default class Receiver {
     this.accepts = def.accepts;
     this.required = def.required;
     this.delivered = 0;
+    this.wasted = 0;
     this.style = RECEIVER_STYLE[def.kind];
 
     this.x = def.x;
@@ -328,11 +329,24 @@ export default class Receiver {
     this.meterText.setOrigin(0.5);
     this.meterText.setShadow(0, 2, 'rgba(0,0,0,0.7)', 3);
 
-    this.meter.add([g, icon, this.meterText]);
+    this.wasteText = this.scene.add.text(w / 2 - 16, 0, '', {
+      fontFamily: FONT,
+      fontSize: '17px',
+      fontStyle: 'bold',
+      color: '#ff8fa3',
+    });
+    this.wasteText.setOrigin(0.5).setVisible(false);
+    this.wasteText.setShadow(0, 2, 'rgba(0,0,0,0.7)', 3);
+
+    this.meter.add([g, icon, this.meterText, this.wasteText]);
   }
 
   _refreshMeter() {
     this.meterText.setText(`${this.delivered}/${this.required}`);
+    if (this.wasted) {
+      this.wasteText.setText(`-${this.wasted}`);
+      this.wasteText.setVisible(true);
+    }
     if (this.isSatisfied) {
       this.meterText.setColor('#7cf6b0');
       this.scene.tweens.add({
@@ -356,19 +370,20 @@ export default class Receiver {
   }
 
   /**
-   * A payload of ours fell out of play. Lower the bar rather than dead-ending
-   * the level — but never to zero, or doing nothing would count as a win.
+   * One of ours was wasted. The quota does not move — groups spawn with spare
+   * items precisely so this is survivable — but the meter shows the damage so
+   * the player can see their margin shrinking.
    */
-  forgive() {
-    if (this.required <= 1) return false;
-    this.required--;
-    this.meterText.setText(`${this.delivered}/${this.required}`);
-    this.meterText.setColor(this.isSatisfied ? '#7cf6b0' : '#ff8fa3');
+  noteWaste() {
+    this.wasted++;
+    this._refreshMeter();
     this.scene.tweens.add({
       targets: this.meter,
-      scale: { from: 1.2, to: 1 },
-      duration: 260,
-      ease: 'Back.out',
+      angle: { from: -6, to: 6 },
+      duration: 70,
+      yoyo: true,
+      repeat: 2,
+      onComplete: () => this.meter.setAngle(0),
     });
     return true;
   }

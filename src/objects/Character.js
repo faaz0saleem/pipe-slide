@@ -14,6 +14,8 @@ import { mix } from '../config/Palette.js';
 
 const SKIN = [0xf3c9a0, 0xe0a878, 0xc98c5e, 0xa96e46, 0x7d4f30];
 
+const SAD_LINES = ['Oh no!', 'Not again…', 'That was mine!', 'Aww…'];
+
 /** Per-kind flavour: skin pick, accent and the idle mood. */
 const KINDS = {
   shiverer: { mood: 'cold', accent: 0x9fd8ff, skin: 0 },
@@ -441,6 +443,62 @@ export default class Character {
           ease: 'Quad.out',
         });
       },
+    });
+  }
+
+  /**
+   * A one-shot dejected reaction: something they were waiting for just got
+   * wasted. Deliberately not a state change — they slump, protest, and go back
+   * to waiting, because the level is still winnable.
+   */
+  disappoint() {
+    if (this.happy || this._sulking) return;
+    this._sulking = true;
+
+    const t = this.scene.tweens;
+
+    // Head shake and a slump.
+    t.add({
+      targets: this.head,
+      x: { from: -5, to: 5 },
+      duration: 80,
+      yoyo: true,
+      repeat: 3,
+      onComplete: () => (this.head.x = 0),
+    });
+    t.add({
+      targets: this.root,
+      scaleY: this.scaleBase * 0.93,
+      duration: 220,
+      yoyo: true,
+      hold: 420,
+      ease: 'Quad.out',
+    });
+    // Hands to the face.
+    t.add({ targets: this.armL, angle: -58, duration: 200, yoyo: true, hold: 520 });
+    t.add({ targets: this.armR, angle: 58, duration: 200, yoyo: true, hold: 520 });
+
+    // A little grey rain cloud.
+    const cloud = this.scene.add.particles(this.root.x, this.root.y - 205, 'fx_dot', {
+      speedY: { min: 20, max: 55 },
+      speedX: { min: -14, max: 14 },
+      scale: { start: 0.3, end: 0 },
+      alpha: { start: 0.55, end: 0 },
+      lifespan: 700,
+      frequency: 90,
+      tint: [0x8892be, 0x5a648f],
+    });
+    cloud.setDepth(DEPTH.fx);
+    this.scene.time.delayedCall(700, () => cloud.stop());
+    this.scene.time.delayedCall(1600, () => cloud.destroy());
+
+    this.say(SAD_LINES[Math.floor(Math.random() * SAD_LINES.length)], 1100);
+
+    this.scene.time.delayedCall(1000, () => {
+      this._sulking = false;
+      if (this.happy) return;
+      this.armL.setAngle(this.spec.mood === 'cold' ? -14 : 0);
+      this.armR.setAngle(this.spec.mood === 'cold' ? 14 : 0);
     });
   }
 
