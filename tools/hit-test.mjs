@@ -37,8 +37,11 @@ const map = await page.evaluate(() => {
 const toPage = (x, y) => ({ x: map.left + x * map.sx, y: map.top + y * map.sy });
 
 let failures = 0;
-// Levels with 2, 3 and 4 pipes, so every rod angle is represented.
-for (const levelId of [1, 30, 55, 95]) {
+// Levels with 2, 3 and 4 pipes, so every rod angle is represented. Sampled
+// widely rather than at a few landmarks: the curvier the channels got, the
+// closer two pipes' hardware ended up, and a ring shadowed by a neighbour's
+// rod only shows up on the particular boards where they touch.
+for (const levelId of [1, 8, 17, 25, 30, 38, 44, 55, 60, 68, 77, 84, 90, 95, 99]) {
   await page.evaluate((id) => {
     const g = window.game;
     // Completing a level pauses GameScene behind the results screen, and a

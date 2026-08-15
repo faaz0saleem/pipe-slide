@@ -164,31 +164,50 @@ export default class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Route taps to the nearest rod.
+   * Route taps to the rod the player is actually reaching for.
    *
    * Gates are longer than the gap between pipes, so their hit zones overlap
    * heavily and Phaser only ever delivers to the top-most one — which left
-   * whole rods unpullable depending on z-order. Picking by distance to the rod
-   * itself is unambiguous and matches what the player is aiming at.
+   * whole rods unpullable depending on z-order. Distance to the rod decides it
+   * instead, which is unambiguous and matches where the finger went.
+   *
+   * The ring handle gets first refusal. On a curved board two pipes' hardware
+   * can end up millimetres apart, and a rod passing beside a neighbour's ring
+   * would otherwise steal every tap aimed at that ring — the one part of a pin
+   * that is unmistakably a grab target.
    */
   _routePinTaps() {
     this.input.on('pointerdown', (pointer) => {
       if (this.finished) return;
+      const { worldX: px, worldY: py } = pointer;
 
       let best = null;
       let bestDist = Infinity;
+      let onRing = false;
+
       for (const pin of this.pins) {
         if (pin.pulled || !pin.segment) continue;
-        const d = Phaser.Math.Distance.BetweenPointsSquared(
-          { x: pointer.worldX, y: pointer.worldY },
-          nearestOnSegment(pointer.worldX, pointer.worldY, pin.segment)
-        );
+
+        const ring = Phaser.Math.Distance.Between(px, py, pin.ring[0], pin.ring[1]);
+        const hitRing = ring <= pin.ringRadius;
+        // A ring beats any rod; between two rings, the nearer one wins.
+        if (hitRing && !onRing) {
+          onRing = true;
+          bestDist = ring;
+          best = pin;
+          continue;
+        }
+        if (onRing && !hitRing) continue;
+
+        const d = hitRing
+          ? ring
+          : Phaser.Math.Distance.BetweenPoints({ x: px, y: py }, nearestOnSegment(px, py, pin.segment));
         if (d < bestDist) {
           bestDist = d;
           best = pin;
         }
       }
-      if (best && bestDist <= best.grabRadius * best.grabRadius) best.tryPull();
+      if (best && (onRing || bestDist <= best.grabRadius)) best.tryPull();
     });
   }
 

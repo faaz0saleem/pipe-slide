@@ -143,11 +143,14 @@ export default class Pin {
     this.hit.setInteractive({ useHandCursor: true });
     this.container.add(this.hit);
 
-    // World-space endpoints of the rod, for the scene's nearest-rod picking.
+    // World-space geometry for the scene's tap routing: the rod as a segment,
+    // and the ring on its own because that is what a player aims at.
     const rad = Phaser.Math.DegToRad(this.def.angle);
     const ex = Math.cos(rad) * (half + ringR);
     const ey = Math.sin(rad) * (half + ringR);
     this.segment = [this.def.x - ex, this.def.y - ey, this.def.x + ex, this.def.y + ey];
+    this.ring = [this.def.x + Math.cos(rad) * kx, this.def.y + Math.sin(rad) * kx];
+    this.ringRadius = ringR + 14;
     this.grabRadius = thick / 2 + 24;
   }
 

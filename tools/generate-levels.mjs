@@ -371,38 +371,48 @@ function bowl(topY, neckTop, outer, shift = 0) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Control points for the curved inlets. Exit points are fixed (they have to
- * clear each other and land inside the bowl); the middle points get a little
- * per-level jitter so no two levels trace the same curve.
+ * Control points for the curved inlets.
+ *
+ * The mouths and the outlets are fixed: the mouths span the board so the
+ * reservoirs sit side by side, and the outlets have to clear each other and
+ * land inside the bowl. Everything between them is free, and the trick to
+ * spending that freedom is to move the pipes *in phase*.
+ *
+ * A pipe bowing on its own is limited by the gap to its neighbour, which on a
+ * four-pipe board is barely a dozen pixels — hence the near-straight chutes
+ * this replaces. A bundle that all swings the same way at the same depth keeps
+ * its spacing no matter how far it travels, so the shared wave can be as wide
+ * as the board edges and the bore allow. On top of it each pipe gets its own
+ * smaller wave, of its own frequency and phase, using whatever clearance the
+ * shared one has not spent — so the channels read as individual glassware
+ * rather than a comb.
+ *
+ * Both waves vanish at t=0 and t=1, which is what keeps the endpoints exact.
  */
+
 /**
- * Lateral room each pipe has to bow into without touching its neighbour.
- * Four pipes fill the board, so they get almost none — their variety has to
- * come from profile, stagger and mirroring instead of from curvature.
+ * Widest swing a wave can carry before the bend guard starts straightening it.
+ *
+ * Measured, not guessed: sweep amplitude against the bore and see where the
+ * built path stops keeping most of the bow it was asked for. Two things drive
+ * it. More half-periods in the same drop means a tighter radius, so a
+ * serpentine has to travel far less than one long bow. And skew compresses the
+ * bend into part of the descent, which tightens it again — so pushing the
+ * curve down into the roomy half is not free, and asking for both a hard skew
+ * and a big amplitude gets you a straight pipe.
  */
-function bowRoom(count) {
-  return { 2: 62, 3: 30, 4: 13 }[count] ?? 20;
-}
+const WAVE_CEILING = {
+  1: (skew) => 240 - 100 * (skew - 1),
+  2: (skew) => 80 - 60 * (skew - 1),
+  3: () => 34,
+};
 
-const MOTIFS = ['straight', 'bowL', 'bowR', 'ess', 'esse'];
+/** How far the belly of the curve may be pushed down the tube, per shape. */
+const WAVE_SKEW = { 1: [1.0, 2.2], 2: [1.0, 1.7], 3: [1.0, 1.0] };
 
-/** Lateral offsets for the two interior control points of a pipe. */
-function motifOffsets(motif, amp) {
-  switch (motif) {
-    case 'bowL':
-      return [-amp, -amp * 0.55];
-    case 'bowR':
-      return [amp, amp * 0.55];
-    case 'ess':
-      return [amp, -amp * 0.85];
-    case 'esse':
-      return [-amp, amp * 0.85];
-    default:
-      return [0, 0];
-  }
-}
+const smoothstep = (u) => u * u * (3 - 2 * u);
 
-function inletControls(count, exitY, rng) {
+function inletControls(count, exitY, rng, halves) {
   // Where each pipe starts across the top and where it has to arrive.
   const tops = {
     2: [150, 570],
@@ -415,22 +425,119 @@ function inletControls(count, exitY, rng) {
     4: [150, 290, 430, 570],
   }[count].map((x) => x + Math.round((rng() - 0.5) * (count === 4 ? 16 : 40)));
 
-  const amp = bowRoom(count);
+  // Mouth heights stagger a long way now: a reservoir that starts 100px below
+  // its neighbour frees the lateral room its neighbour is using.
+  const mouthY = tops.map(() => TUBE_TOP + Math.round(rng() * 96));
 
-  return tops.map((topX, i) => {
-    const motif = MOTIFS[Math.floor(rng() * MOTIFS.length) % MOTIFS.length];
-    const [o1, o2] = motifOffsets(motif, amp * (0.6 + rng() * 0.4));
-    // Staggering the mouths reads as variety even where there is no room to bend.
-    const top = TUBE_TOP + Math.round(rng() * 40);
-    const exitX = exits[i];
-    const lerp = (t) => topX + (exitX - topX) * t;
-    return [
-      [topX, top],
-      [lerp(0.34) + o1, top + (exitY - top) * 0.36],
-      [lerp(0.7) + o2, top + (exitY - top) * 0.72],
-      [exitX, exitY],
-    ];
-  });
+  /*
+   * Wave shape.
+   *
+   * `k` half-periods over the descent: one is a long C-bow, two an S, three a
+   * serpentine. `skew` decides *where* the bow happens. That matters more than
+   * the amplitude does, because the room is not spread evenly down the board:
+   * up top the reservoirs already span it edge to edge, and only once the
+   * spouts have narrowed is there anywhere to go. A plain sine peaks halfway
+   * down, at the worst possible depth; skewing it past 1 pushes the belly of
+   * the curve into the lower half where the space is, which is also where the
+   * reference boards do their hooking.
+   */
+  const rollWave = (gain) => {
+    // Long bows twice as often as S-curves, serpentines rarest: they are the
+    // ones that have to stay small, and a board of timid squiggles reads as
+    // less curved than a board of two confident hooks.
+    const k = [1, 1, 1, 2, 2, 3][Math.floor(rng() * 6) % 6];
+    const [lo, hi] = WAVE_SKEW[k];
+    const skew = lo + rng() * (hi - lo);
+    const flip = rng() < 0.5 ? -1 : 1;
+    return {
+      at: (t) => flip * Math.sin(Math.PI * k * Math.pow(t, skew)),
+      amp: WAVE_CEILING[k](skew),
+      gain,
+    };
+  };
+
+  const shared = rollWave(0.72 + rng() * 0.28);
+  const solo = tops.map(() => rollWave(0.5 + rng() * 0.5));
+
+  // Straight-line lane of pipe i at depth t, before any wave is applied. Eased
+  // so a pipe leaves its mouth vertically and arrives at the bowl vertically.
+  const lane = (i, t) => tops[i] + (exits[i] - tops[i]) * smoothstep(t);
+  const yAt = (i, t) => mouthY[i] + (exitY - mouthY[i]) * t;
+  // Neighbours are compared at a shared *depth*, not a shared path fraction:
+  // with the mouths staggered by up to 96px the two are no longer the same
+  // thing, and a pipe's fat reservoir can sit beside its neighbour's spout.
+  const tAtY = (i, y) => Math.max(0, Math.min(1, (y - mouthY[i]) / (exitY - mouthY[i])));
+  const half = (i, t) => halves[i](t);
+
+  // Sample the wave finely enough that the spline follows it. At eight steps
+  // the control points sit 60px apart and Catmull-Rom overshoots between them,
+  // manufacturing bends the wave never asked for.
+  const STEPS = 12;
+  const pts = tops.map((topX, i) => [[topX, mouthY[i]]]);
+
+  /*
+   * How much of a wave actually fits.
+   *
+   * Trimming depth by depth is the obvious approach and the wrong one: the
+   * curve then hugs the sine where there is room and goes flat where there is
+   * not, leaving a corner at every changeover. Those corners have a tiny
+   * radius, the bend guard sees them and eases the whole curve off towards a
+   * straight chord, and the result is the near-straight chute this set out to
+   * replace. So ask for the full wave, find the single tightest point, and
+   * scale the whole thing by that one factor — a smaller sine is still a sine.
+   */
+  const fit = (at, amp, budgetAt) => {
+    let scale = 1;
+    for (let s = 1; s < STEPS; s++) {
+      const t = s / STEPS;
+      const need = Math.abs(at(t)) * amp;
+      if (need < 1) continue;
+      scale = Math.min(scale, Math.max(0, budgetAt(t, at(t) < 0)) / need);
+    }
+    return scale;
+  };
+
+  // Room the bundle has to move as one before its outermost wall leaves the
+  // board. Measured at each depth, so a bundle whose spouts have narrowed gets
+  // the room its reservoirs could not have.
+  const bundleRoom = (t, toLeft) => {
+    let room = Infinity;
+    for (let i = 0; i < count; i++) {
+      room = Math.min(room, (toLeft ? lane(i, t) : W - lane(i, t)) - half(i, t) - 10);
+    }
+    return room * shared.gain;
+  };
+  const sharedScale = fit(shared.at, shared.amp, bundleRoom);
+  const swingAt = (t) => shared.at(t) * shared.amp * sharedScale;
+
+  // Then each pipe's own bow, in whatever the shared swing has left over.
+  const soloScale = solo.map((sv, i) =>
+    fit(sv.at, sv.amp, (t, toLeft) => {
+      const y = yAt(i, t);
+      // Half the leftover gap to the nearer neighbour: if both lean towards
+      // each other they still meet with clearance to spare.
+      let gap = Infinity;
+      for (const j of [i - 1, i + 1]) {
+        if (j < 0 || j >= count) continue;
+        const tj = tAtY(j, y);
+        gap = Math.min(gap, Math.abs(lane(j, tj) - lane(i, t)) - half(i, t) - half(j, tj) - 18);
+      }
+      const x = lane(i, t) + swingAt(t);
+      const toEdge = (toLeft ? x : W - x) - half(i, t) - 10;
+      return Math.min(gap === Infinity ? 120 : gap / 2, toEdge) * sv.gain;
+    })
+  );
+
+  for (let s = 1; s < STEPS; s++) {
+    const t = s / STEPS;
+    for (let i = 0; i < count; i++) {
+      const x = lane(i, t) + swingAt(t) + solo[i].at(t) * solo[i].amp * soloScale[i];
+      pts[i].push([x, yAt(i, t)]);
+    }
+  }
+
+  for (let i = 0; i < count; i++) pts[i].push([exits[i], exitY]);
+  return pts;
 }
 
 /**
@@ -451,8 +558,12 @@ function gateFractions(n, rng) {
  * A curve whose radius approaches the bore squeezes the inner wall across the
  * tube and seals it. Cheap guard: walk the two wall polylines and confirm the
  * bore never closes below three quarters of its nominal width.
+ *
+ * A failure is a re-roll, not a crash. The bend guard eases curves off until
+ * they fit, but a hard enough shape still occasionally slips past it, and the
+ * right answer is to draw another one rather than to ship a sealed pipe.
  */
-function assertBore(level, index, built, bore) {
+function boreIsOpen(built, bore) {
   const [a, b] = built.walls;
   let worst = Infinity;
   for (let i = 0; i < a.points.length; i++) {
@@ -462,12 +573,47 @@ function assertBore(level, index, built, bore) {
       worst = Math.min(worst, Math.hypot(p[0] - q[0], p[1] - q[1]));
     }
   }
-  if (worst < bore * 0.75) {
-    throw new Error(
-      `L${level} inlet ${index}: bend pinches the bore to ${worst.toFixed(0)}px of ${bore} — ` +
-        'soften the control points in inletControls()'
-    );
+  return worst >= bore * 0.75;
+}
+
+/** Horizontal extent of a pipe at depth `y`, or null if it does not reach it. */
+function xSpanAt(walls, y) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const pts of walls) {
+    for (let i = 1; i < pts.length; i++) {
+      const [x0, y0] = pts[i - 1];
+      const [x1, y1] = pts[i];
+      if (y0 === y1 || y < Math.min(y0, y1) || y > Math.max(y0, y1)) continue;
+      const x = x0 + ((x1 - x0) * (y - y0)) / (y1 - y0);
+      if (x < lo) lo = x;
+      if (x > hi) hi = x;
+    }
   }
+  return lo === Infinity ? null : [lo, hi];
+}
+
+/**
+ * Two pipes may not pass through each other.
+ *
+ * A tolerance, not a clearance. On a four-pipe board the reservoirs are packed
+ * with only a few pixels of glass between them and occasionally graze, which
+ * has always looked fine; what must never happen is one channel swinging
+ * straight through another. So this rejects real overlap and ignores contact.
+ */
+function channelsAreClear(pipes, tol = 14) {
+  for (let y = TUBE_TOP; y < 700; y += 18) {
+    for (let a = 0; a < pipes.length; a++) {
+      const A = xSpanAt(pipes[a], y);
+      if (!A) continue;
+      for (let b = a + 1; b < pipes.length; b++) {
+        const B = xSpanAt(pipes[b], y);
+        if (!B) continue;
+        if (Math.min(A[1], B[1]) - Math.max(A[0], B[0]) > tol) return false;
+      }
+    }
+  }
+  return true;
 }
 
 /**
@@ -509,10 +655,13 @@ function mirrorLevel(lv) {
 
 /** Spare items per group, so a wrong pull wastes rather than dead-ends. */
 function slackFor(level) {
-  if (level <= 5) return 0;
-  if (level <= 30) return 1;
-  if (level <= 70) return 2;
-  return 4;
+  // Forgiveness runs the *other* way to difficulty, which is the opposite of
+  // what this used to do. The opening levels absorb a slip while the player is
+  // still working out what a blade does; the late boards, where a mistake is an
+  // informed one, hold back two spare items and no more. Measuring it settled
+  // the question: a random pull order already fails outright from level 22 on,
+  // so the puzzles are tight and the only thing left to tighten is the margin.
+  return level <= 20 ? 3 : 2;
 }
 
 function groupSize(rng, level) {
@@ -529,12 +678,12 @@ function difficultyFor(level) {
   // Strictly non-decreasing: a player must never hit an easier board than the
   // one before. Randomising a tier boundary used to walk the pin count
   // backwards ten times across the run.
-  if (level <= 6) return { pipes: 2, gates: 1 };
-  if (level <= 15) return { pipes: 2, gates: 2 };
-  if (level <= 24) return { pipes: 2, gates: 3 };
-  if (level <= 36) return { pipes: 3, gates: 2 };
-  if (level <= 52) return { pipes: 3, gates: 3 };
-  if (level <= 72) return { pipes: 4, gates: 2 };
+  if (level <= 5) return { pipes: 2, gates: 1 };
+  if (level <= 13) return { pipes: 2, gates: 2 };
+  if (level <= 21) return { pipes: 2, gates: 3 };
+  if (level <= 32) return { pipes: 3, gates: 2 };
+  if (level <= 46) return { pipes: 3, gates: 3 };
+  if (level <= 62) return { pipes: 4, gates: 2 };
   return { pipes: 4, gates: 3 };
 }
 
@@ -545,10 +694,18 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   const receivers = [];
   const spawns = [];
 
-  /** Register a channel: both edges become physics walls and one render pair. */
-  const channel = (left, right) => {
+  /**
+   * Register a channel: both edges become physics walls and one render pair.
+   *
+   * `cap` closes the top of the channel with a rim. Inlets want it — a
+   * reservoir is a sealed vessel, and now that the mouths stagger up to 96px
+   * they no longer all hide behind the HUD fade, so an uncapped one reads as a
+   * tube sliced off mid-air. The collector bowl must stay open: everything
+   * above it pours in through its mouth.
+   */
+  const channel = (left, right, cap = false) => {
     walls.push(left, right);
-    tubes.push({ left: left.points, right: right.points, t: left.t });
+    tubes.push({ left: left.points, right: right.points, t: left.t, cap });
   };
 
   const inletCount = pipes;
@@ -608,17 +765,23 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   };
 
   const exitY = bottom.bowlTop - 12;
-  const controls = inletControls(inletCount, exitY, rng);
+  // Profiles are settled before the curves are drawn: how far a pipe may swing
+  // depends on how fat it is at that depth, and a narrowed spout has room a
+  // reservoir does not.
+  const shapes = Array.from({ length: inletCount }, (_, i) => pipeProfile(i));
+  const controls = inletControls(inletCount, exitY, rng, shapes.map((s) => s.fn));
   const fractions = gateFractions(gateCount, rng);
 
   // Each inlet: a curved tube, its gates, and a payload group behind each gate.
   const gatesByType = {};
+  const bores = [];
   for (let i = 0; i < inletCount; i++) {
     const t = carried[i];
-    const shape = pipeProfile(i);
+    const shape = shapes[i];
     const built = vesselProfiled(controls[i], shape.fn, shape.narrow, WALL_T, 9);
-    assertBore(level, i, built, spoutHalf * 2);
-    channel(wall(built.walls[0].points, WALL_T), wall(built.walls[1].points, WALL_T));
+    if (!boreIsOpen(built, spoutHalf * 2)) return null;
+    bores.push([built.walls[0].points, built.walls[1].points]);
+    channel(wall(built.walls[0].points, WALL_T), wall(built.walls[1].points, WALL_T), true);
 
     const len = pathLength(built.path);
     const boreAt = (f) => built.halfAt(f) * 2;
@@ -636,6 +799,12 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
     // Two pipes can feed the same pit, so append rather than replace.
     gatesByType[t] = (gatesByType[t] || []).concat(gates.map((g) => g.id));
   }
+
+  // Bundled swings keep their spacing in theory; confirm it in the geometry,
+  // because a solo bow and a mouth stagger can conspire to close the gap. The
+  // floor is deliberately just under the 20px the reservoirs are packed at on
+  // a four-pipe board: this is a crossing detector, not a spacing preference.
+  if (!channelsAreClear(bores, 17)) return null;
 
   // Release one inlet per blade stage, pulling its gates bottom-up.
   const solution = [];
@@ -747,6 +916,7 @@ function attemptLevel(level, attempt) {
   } else {
     const { pipes, gates } = difficultyFor(level);
     core = buildPipeLevel(rng, level, pipes, gates);
+    if (!core) return null; // geometry rejected itself; the caller re-rolls
   }
 
   // Pits ask for everything that spawns, minus the spare items.
@@ -815,6 +985,17 @@ function spawnsAreClear(lv) {
       }
     }
   }
+  // Nor inside each other. Rows are laid square to the centre-line and pushed
+  // up until they clear the gate; on a hard bend the pushing bunches them, and
+  // two rows on the inside of the curve can end up sharing space.
+  const all = lv.spawns.flatMap((sp) => sp.items.map(([x, y]) => [x, y, sp.r]));
+  for (let i = 0; i < all.length; i++) {
+    for (let j = i + 1; j < all.length; j++) {
+      const [x0, y0, r0] = all[i];
+      const [x1, y1, r1v] = all[j];
+      if (Math.hypot(x0 - x1, y0 - y1) < r0 + r1v) return false;
+    }
+  }
   return true;
 }
 
@@ -847,11 +1028,11 @@ function buildLevel(level, prevShape) {
   let fallback = null;
   let lookalike = null;
 
-  for (let attempt = 0; attempt < 16; attempt++) {
+  for (let attempt = 0; attempt < 26; attempt++) {
     const candidate = attemptLevel(level, attempt);
 
     // Cheap rejections first: no point simulating a broken board.
-    if (!spawnsAreClear(candidate)) continue;
+    if (!candidate || !spawnsAreClear(candidate)) continue;
 
     const report = simulateLevel(candidate);
     if (!report.solved) continue;
@@ -867,10 +1048,14 @@ function buildLevel(level, prevShape) {
   if (lookalike) return lookalike;
 
   if (fallback) return fallback;
-  // Nothing played. Hand back attempt 0 so the build fails loudly downstream
-  // rather than silently shipping a level nobody can finish.
-  const last = attemptLevel(level, 0);
-  return { level: last, attempt: 0, quality: 'unsolved', shape: silhouette(last) };
+  // Nothing played. Hand back the first candidate that at least built, so the
+  // build fails loudly downstream rather than silently shipping a level nobody
+  // can finish.
+  for (let attempt = 0; attempt < 26; attempt++) {
+    const last = attemptLevel(level, attempt);
+    if (last) return { level: last, attempt, quality: 'unsolved', shape: silhouette(last) };
+  }
+  throw new Error(`L${level}: no candidate geometry built at all`);
 }
 
 const levels = [];

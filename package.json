@@ -16,7 +16,8 @@
     "smoke": "node tools/smoke-test.mjs",
     "hit-test": "node tools/hit-test.mjs",
     "single": "node tools/make-single.mjs",
-    "variety": "node tools/variety-report.mjs"
+    "variety": "node tools/variety-report.mjs",
+    "difficulty": "node tools/difficulty-report.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

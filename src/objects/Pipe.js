@@ -183,7 +183,12 @@ export default class PipeSystem {
       this._fillChannel(g, left, right, glowColor, 0.07);
 
       // Thin bright rims, the way real glassware reads — not fat bars.
-      for (const side of [left, right]) {
+      const edges = [left, right];
+      // A capped channel is a sealed vessel: bridge the two walls across the
+      // top so the reservoir closes instead of ending in mid-air. Bowls stay
+      // open, because everything above them pours in through the mouth.
+      if (tube.cap) edges.push([left[0], right[0]]);
+      for (const side of edges) {
         this._fillStroke(glow, side, 18, glowColor, 0.14);
         this._fillStroke(g, side, 10, 0xdff6ff, 0.22);
         this._fillStroke(g, side, 4.5, stroke, 0.95);

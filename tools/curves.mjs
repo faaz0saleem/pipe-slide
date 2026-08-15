@@ -104,21 +104,47 @@ export function offsetPath(path, d) {
   });
 }
 
+/** Radius of the circle through three consecutive vertices. */
+function radiusAt(path, i) {
+  const [ax, ay] = path[i - 1];
+  const [bx, by] = path[i];
+  const [cx, cy] = path[i + 1];
+  const A = Math.hypot(bx - ax, by - ay);
+  const B = Math.hypot(cx - bx, cy - by);
+  const C = Math.hypot(cx - ax, cy - ay);
+  const area = Math.abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2;
+  if (area < 1e-6) return Infinity; // collinear
+  return (A * B * C) / (4 * area);
+}
+
 /** Smallest radius of curvature anywhere along a polyline. */
 export function minRadius(path) {
   let best = Infinity;
-  for (let i = 1; i < path.length - 1; i++) {
-    const [ax, ay] = path[i - 1];
-    const [bx, by] = path[i];
-    const [cx, cy] = path[i + 1];
-    const A = Math.hypot(bx - ax, by - ay);
-    const B = Math.hypot(cx - bx, cy - by);
-    const C = Math.hypot(cx - ax, cy - ay);
-    const area = Math.abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2;
-    if (area < 1e-6) continue; // collinear: infinite radius
-    best = Math.min(best, (A * B * C) / (4 * area));
-  }
+  for (let i = 1; i < path.length - 1; i++) best = Math.min(best, radiusAt(path, i));
   return best;
+}
+
+/**
+ * How badly a bend outruns the bore it has to carry, in pixels.
+ *
+ * Offsetting a curve by more than its radius folds the inner wall back through
+ * itself. The limit is therefore local: what matters is the half-bore *at the
+ * bend*, not the tube's narrowest point somewhere else. Judging every vessel
+ * by its narrowest bore forbids hooks in the spout — the one place a glass
+ * channel can genuinely hook — while quietly allowing pinches up in the fat
+ * reservoir, where the wall is offset nearly twice as far.
+ *
+ * @returns {number} 0 when every bend is safe, otherwise the worst shortfall
+ */
+export function bendStrain(path, halfAt, slack = 1.1) {
+  const acc = arcTable(path);
+  const total = acc.at(-1) || 1;
+  let worst = 0;
+  for (let i = 1; i < path.length - 1; i++) {
+    const need = halfAt(acc[i] / total) * slack;
+    worst = Math.max(worst, need - radiusAt(path, i));
+  }
+  return worst;
 }
 
 /** Ease interior control points towards the straight chord. */
@@ -225,17 +251,17 @@ export const PROFILES = {
 /**
  * A vessel: a tube whose bore varies down its length, like glassware.
  * `profile` is a function of the 0..1 arc position returning the half-bore
- * there; `narrowest` is the tightest it ever gets, which is what the bend
- * guard has to respect.
+ * there. Bends are eased off only until they clear the bore *where they
+ * happen*, so a narrow spout keeps its hook.
  */
 export function vesselProfiled(ctrl, profile, narrowest, t, stepsPerSpan = 9) {
-  const safeRadius = narrowest * 1.25;
-
   let control = ctrl.map((p) => p.slice());
   let path = smoothPath(control, stepsPerSpan);
   let relaxed = 0;
-  while (minRadius(path) < safeRadius && relaxed < 14) {
-    control = relax(control, 0.18);
+  // Small steps: one big relax straightens a serpentine into a plain chute,
+  // and the whole point of the exercise is to keep as much bend as will fit.
+  while (bendStrain(path, profile) > 0 && relaxed < 26) {
+    control = relax(control, 0.09);
     path = smoothPath(control, stepsPerSpan);
     relaxed++;
   }
