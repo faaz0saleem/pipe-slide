@@ -648,8 +648,26 @@ export default class GameScene extends Phaser.Scene {
     this.settleTimer += delta;
     if (this.settleTimer < 1600) return;
 
+    if (this.receivers.every((r) => r.isSatisfied) || this.level.noFail) {
+      this._win();
+      return;
+    }
+
+    // Nothing can move again, so a payload wedged on a rim is the physics
+    // engine's fault rather than the player's. Write those off the same way a
+    // missed item is written off — it costs the perfect star but never leaves
+    // the board in an unwinnable state. Only fail if that still isn't enough.
+    for (const p of alive) {
+      const receiver = this.receivers.find((r) => r.accepts === p.type);
+      if (!receiver || !receiver.forgive()) continue;
+      p.resolved = true;
+      this.lostCount++;
+      this.perfect = false;
+      p.destroy();
+    }
+    this.hud?.events.emit('progress', this._progressRatio());
+
     if (this.receivers.every((r) => r.isSatisfied)) this._win();
-    else if (this.level.noFail) this._win();
     else this._fail(alive.length ? 'Some items got stuck!' : 'Not everything was delivered');
   }
 
