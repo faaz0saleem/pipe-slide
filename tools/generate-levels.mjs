@@ -282,6 +282,25 @@ function fillTube(rng, path, gate, gateDist, gateAbove, count, type, boreAt) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Slide a built bottom section sideways.
+ *
+ * Everything below the bowl — neck, blades, pits — is one rigid assembly, so
+ * translating it is physics-neutral but changes the macro composition of the
+ * board completely: the flow funnels hard left on one level and hard right on
+ * the next, instead of every level draining down the middle.
+ */
+function shiftBottom(dx, walls, pins, receivers, fromWall, fromPin, fromRecv) {
+  if (!dx) return;
+  // Mutate the point arrays in place: the render-time tube pairs hold the very
+  // same arrays, so replacing them would leave the drawn glass behind.
+  for (let i = fromWall; i < walls.length; i++) {
+    for (const pt of walls[i].points) pt[0] = r1(pt[0] + dx);
+  }
+  for (let i = fromPin; i < pins.length; i++) pins[i].x = r1(pins[i].x + dx);
+  for (let i = fromRecv; i < receivers.length; i++) receivers[i].x = r1(receivers[i].x + dx);
+}
+
+/**
  * One blade, two pits. With the blade in place the flow slides left; pull it
  * and the flow drops straight into the centre pit.
  */
@@ -326,21 +345,23 @@ function bottomTwoBlades(types, channel, pins, receivers) {
 }
 
 /** The curved collector every tube empties into. */
-function bowl(topY, neckTop, outer) {
+function bowl(topY, neckTop, outer, shift = 0) {
   const drop = neckTop - topY;
-  const span = outer - NECK_L;
+  const left = NECK_L + shift;
+  const right = NECK_R + shift;
+  // Asymmetric on a shifted drain, which is exactly the point: the flow leans.
   return [
     curveWall([
       [outer, topY],
-      [outer - span * 0.12, topY + drop * 0.38],
-      [outer - span * 0.55, topY + drop * 0.76],
-      [NECK_L, neckTop],
+      [outer + (left - outer) * 0.16, topY + drop * 0.38],
+      [outer + (left - outer) * 0.62, topY + drop * 0.76],
+      [left, neckTop],
     ]),
     curveWall([
       [W - outer, topY],
-      [W - outer + span * 0.12, topY + drop * 0.38],
-      [W - outer + span * 0.55, topY + drop * 0.76],
-      [NECK_R, neckTop],
+      [W - outer + (right - (W - outer)) * 0.16, topY + drop * 0.38],
+      [W - outer + (right - (W - outer)) * 0.62, topY + drop * 0.76],
+      [right, neckTop],
     ]),
   ];
 }
@@ -551,24 +572,40 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
     if (i === doubled) carried.push(t);
   });
 
+  // How far the whole drain assembly slides off centre. Clamped so the outer
+  // pit never leaves the board.
+  const shift = [-96, -48, 0, 0, 48, 96][Math.floor(rng() * 6) % 6];
+
   const bottom =
     pitCount === 2
       ? bottomOneBlade(pitTypes, channel, pins, receivers)
       : bottomTwoBlades(pitTypes, channel, pins, receivers);
 
+  // Clamp so the outermost pit never leaves the board.
+  const minX = Math.min(...receivers.map((r) => r.x - r.w / 2));
+  const maxX = Math.max(...receivers.map((r) => r.x + r.w / 2));
+  const clamped = Math.max(-(minX - 6), Math.min(W - 6 - maxX, shift));
+  shiftBottom(clamped, walls, pins, receivers, 0, 0, 0);
+
   const [bowlL, bowlR] = bowl(
     bottom.bowlTop,
     bottom.neckTop,
-    wobble({ 2: 150, 3: 100, 4: 82 }[inletCount], 34)
+    wobble({ 2: 150, 3: 100, 4: 82 }[inletCount], 34),
+    shift
   );
   channel(bowlL, bowlR);
 
-  // The bore profile is a per-level identity: flasks, bellies and cones read
-  // as completely different glassware at a glance.
-  const shapeName = ['flask', 'belly', 'taper', 'pill', 'flask', 'belly'][
-    Math.floor(rng() * 6) % 6
-  ];
-  const profile = PROFILES[shapeName](bulbHalf, spoutHalf);
+  // Bore profile is picked per *pipe*, not per level: a flask standing next to
+  // an hourglass next to a gourd is what makes two boards read as different
+  // pieces of apparatus rather than the same one nudged around.
+  const SHAPES = ['flask', 'belly', 'taper', 'pill', 'double', 'gourd', 'cone', 'hourglass'];
+  const pipeProfile = (i) => {
+    const name = SHAPES[Math.floor(rng() * SHAPES.length) % SHAPES.length];
+    // Each pipe also gets its own proportions, so even two flasks differ.
+    const wide = bulbHalf + Math.round((rng() - 0.5) * 12);
+    const narrow = Math.min(wide - 14, spoutHalf + Math.round((rng() - 0.5) * 10));
+    return { fn: PROFILES[name](wide, narrow), narrow, name };
+  };
 
   const exitY = bottom.bowlTop - 12;
   const controls = inletControls(inletCount, exitY, rng);
@@ -578,7 +615,8 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   const gatesByType = {};
   for (let i = 0; i < inletCount; i++) {
     const t = carried[i];
-    const built = vesselProfiled(controls[i], profile, spoutHalf, WALL_T, 9);
+    const shape = pipeProfile(i);
+    const built = vesselProfiled(controls[i], shape.fn, shape.narrow, WALL_T, 9);
     assertBore(level, i, built, spoutHalf * 2);
     channel(wall(built.walls[0].points, WALL_T), wall(built.walls[1].points, WALL_T));
 

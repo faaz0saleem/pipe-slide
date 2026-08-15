@@ -182,6 +182,23 @@ export default class Backdrop {
     g.fillStyle(this.theme.accent, 0.25);
     g.fillRect(0, top, w, 3);
 
+    // Waste drains: anything that misses a pit lands here, so a lost payload
+    // has somewhere visible to go instead of just vanishing on bare ground.
+    for (const dx of [-1, 1]) {
+      const cx = w / 2 + dx * (w / 2 - 74);
+      g.fillStyle(0x05070f, 0.9);
+      g.fillRoundedRect(cx - 52, top + 6, 104, 26, 8);
+      g.fillStyle(mix(this.theme.ridge[0], 0x000000, 0.5), 1);
+      g.fillRoundedRect(cx - 56, top + 2, 112, 10, 5);
+      g.lineStyle(4, mix(this.theme.ridge[0], 0xffffff, 0.22), 0.9);
+      for (let i = -2; i <= 2; i++) {
+        g.beginPath();
+        g.moveTo(cx + i * 20, top + 9);
+        g.lineTo(cx + i * 20, top + 30);
+        g.strokePath();
+      }
+    }
+
     // Scattered pebbles so the floor is not a flat band.
     g.fillStyle(mix(this.theme.ridge[0], 0x000000, 0.15), 0.9);
     for (let i = 0; i < 26; i++) {

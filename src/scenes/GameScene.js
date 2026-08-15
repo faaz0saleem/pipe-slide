@@ -421,7 +421,7 @@ export default class GameScene extends Phaser.Scene {
     payload.destroy();
     this._wakeNear(x, y);
 
-    this._waste(payload.type, x, y, 'Missed!');
+    this._waste(payload.type, x, y, 'Down the drain!', true);
   }
 
   /**
@@ -431,7 +431,7 @@ export default class GameScene extends Phaser.Scene {
    * items, so a mistake burns slack and upsets the person who was waiting for
    * it. The level is only lost once a pit can no longer reach its quota.
    */
-  _waste(type, x, y, reason) {
+  _waste(type, x, y, reason, downDrain = false) {
     this.lostCount++;
     this.perfect = false;
 
@@ -442,8 +442,11 @@ export default class GameScene extends Phaser.Scene {
     const owner = this.characters.find((c) => c.receiverId === receiver?.def.id);
     owner?.disappoint();
 
-    const puff = this.add.particles(x, y, 'fx_dot', {
-      speed: { min: 40, max: 150 },
+    // Something lost on the floor drains away; something in the wrong pit
+    // puffs out where it landed.
+    const puff = this.add.particles(x, downDrain ? GROUND_Y + 6 : y, 'fx_dot', {
+      speed: downDrain ? { min: 10, max: 50 } : { min: 40, max: 150 },
+      speedY: downDrain ? { min: 30, max: 90 } : undefined,
       scale: { start: 0.45, end: 0 },
       alpha: { start: 0.8, end: 0 },
       lifespan: 460,

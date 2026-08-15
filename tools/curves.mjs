@@ -197,6 +197,29 @@ export const PROFILES = {
     const swell = Math.sin(clamp01(f) * Math.PI);
     return narrow + (wide - narrow) * 0.45 * ease(swell);
   },
+
+  /** Two reservoirs stacked with a waist between them. */
+  double: (wide, narrow) => (f) => {
+    const swell = Math.abs(Math.sin(clamp01(f) * Math.PI * 2));
+    return narrow + (wide - narrow) * ease(swell);
+  },
+
+  /** Small head, fat body — a gourd. */
+  gourd: (wide, narrow) => (f) => {
+    const u = clamp01(f);
+    const head = Math.sin(u * Math.PI * 2) > 0 ? 0.45 : 1;
+    const swell = Math.abs(Math.sin(u * Math.PI * 2));
+    return narrow + (wide - narrow) * ease(swell) * head;
+  },
+
+  /** Inverted: pinched at the mouth, opening out lower down. */
+  cone: (wide, narrow) => (f) => narrow + (wide - narrow) * ease(clamp01(f)),
+
+  /** Wide, pinched at the waist, wide again. */
+  hourglass: (wide, narrow) => (f) => {
+    const waist = Math.abs(Math.cos(clamp01(f) * Math.PI));
+    return narrow + (wide - narrow) * ease(waist);
+  },
 };
 
 /**
