@@ -2,3 +2,5 @@ node_modules/
 dist/
 pipe-slide.zip
 shots/
+dist-single/
+pipe-slide-standalone.html

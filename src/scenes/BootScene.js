@@ -28,6 +28,10 @@ export default class BootScene extends Phaser.Scene {
     this._setTip();
     this._progress(0.08);
 
+    // The standalone single-file build embeds the level book directly: a
+    // file:// page cannot fetch a sibling JSON, so there is nothing to load.
+    if (window.__LEVELS__) return;
+
     this.load.json('levels', 'levels/levels.json');
     this.load.on('progress', (v) => this._progress(0.08 + v * 0.62));
   }
@@ -43,7 +47,7 @@ export default class BootScene extends Phaser.Scene {
     this._progress(0.9);
 
     save.load();
-    Levels.init(this.cache.json.get('levels'));
+    Levels.init(window.__LEVELS__ || this.cache.json.get('levels'));
 
     if (ok && crazy.user?.username) {
       console.info(`[CrazyGames] welcome back, ${crazy.user.username}`);

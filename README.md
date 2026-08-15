@@ -48,3 +48,4 @@ pipes into the pits that want them — and never into the ones that don't.
 | `npm run smoke`    | boots the built game in headless Chromium and plays level 1 |
 | `node tools/shots.mjs` | capture PNGs of the menu, some levels, the map and the shop |
 | `npm run package`  | build + `pipe-slide.zip` for the CrazyGames upload |
+| `npm run single`   | build `pipe-slide-standalone.html` — the whole game in one double-clickable file, no server or network required |
