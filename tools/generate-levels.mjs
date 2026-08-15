@@ -19,7 +19,8 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { vessel, smoothPath, pathLength, atDistance, r1 } from './curves.mjs';
+import { vesselProfiled, PROFILES, smoothPath, pathLength, atDistance, r1 } from './curves.mjs';
+import { simulateLevel } from './solver.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT = resolve(__dirname, '../public/levels/levels.json');
@@ -232,7 +233,7 @@ function fillTube(rng, path, gate, gateDist, gateAbove, count, type, boreAt) {
   const spacing = r * 2 + 8;
   const total = pathLength(path);
   const perRowAt = (d) => {
-    const usable = boreAt(d / total) - r * 2 - 28;
+    const usable = boreAt(d / total) - r * 2 - 44;
     return Math.max(1, Math.min(3, Math.floor(usable / spacing) + 1));
   };
 
@@ -251,16 +252,16 @@ function fillTube(rng, path, gate, gateDist, gateAbove, count, type, boreAt) {
 
   const items = [];
   let placed = 0;
-  let d = gateDist - (r + 16);
+  let d = gateDist - (r + 26);
 
   while (placed < count) {
     const n = Math.min(perRowAt(d), count - placed);
     let row = rowAt(d, n);
     // Push the row up until nothing in it is touching the gate rod.
-    for (let guard = 0; guard < 24; guard++) {
+    for (let guard = 0; guard < 44; guard++) {
       const worst = Math.min(...row.map((p) => distToSeg(p[0], p[1], ...seg)));
       if (worst >= clear) break;
-      d -= 3;
+      d -= 4;
       row = rowAt(d, n);
     }
     // Same story at the top of the stack: measure against the rod above, not
@@ -353,35 +354,64 @@ function bowl(topY, neckTop, outer) {
  * clear each other and land inside the bowl); the middle points get a little
  * per-level jitter so no two levels trace the same curve.
  */
-function inletControls(count, exitY, rng) {
-  const j = () => (rng() - 0.5) * 16;
-
-  if (count === 2) {
-    return [
-      [[150, TUBE_TOP], [146 + j(), 380], [186 + j(), 540], [235, exitY]],
-      [[570, TUBE_TOP], [574 + j(), 380], [534 + j(), 540], [485, exitY]],
-    ];
-  }
-  if (count === 3) {
-    return [
-      [[112, TUBE_TOP], [110 + j(), 350], [136 + j(), 500], [178, exitY]],
-      // Gentle S only. vessel() will relax anything tighter than the bore can
-      // take, but authoring it close to legal keeps the curve as drawn.
-      [[360, TUBE_TOP], [376 + j(), 360], [344 + j(), 505], [360, exitY]],
-      [[608, TUBE_TOP], [610 + j(), 350], [584 + j(), 500], [542, exitY]],
-    ];
-  }
-  // Four is the ceiling: any more and the reservoirs cannot stay wide enough
-  // to keep payloads from arching across them.
-  return [
-    [[92, TUBE_TOP], [92 + j(), 350], [116 + j(), 500], [150, exitY]],
-    [[266, TUBE_TOP], [274 + j(), 360], [258 + j(), 505], [290, exitY]],
-    [[454, TUBE_TOP], [446 + j(), 360], [462 + j(), 505], [430, exitY]],
-    [[628, TUBE_TOP], [628 + j(), 350], [604 + j(), 500], [570, exitY]],
-  ];
+/**
+ * Lateral room each pipe has to bow into without touching its neighbour.
+ * Four pipes fill the board, so they get almost none — their variety has to
+ * come from profile, stagger and mirroring instead of from curvature.
+ */
+function bowRoom(count) {
+  return { 2: 62, 3: 30, 4: 13 }[count] ?? 20;
 }
 
-/** Where the gates sit along a tube, top of the list nearest the outlet. */
+const MOTIFS = ['straight', 'bowL', 'bowR', 'ess', 'esse'];
+
+/** Lateral offsets for the two interior control points of a pipe. */
+function motifOffsets(motif, amp) {
+  switch (motif) {
+    case 'bowL':
+      return [-amp, -amp * 0.55];
+    case 'bowR':
+      return [amp, amp * 0.55];
+    case 'ess':
+      return [amp, -amp * 0.85];
+    case 'esse':
+      return [-amp, amp * 0.85];
+    default:
+      return [0, 0];
+  }
+}
+
+function inletControls(count, exitY, rng) {
+  // Where each pipe starts across the top and where it has to arrive.
+  const tops = {
+    2: [150, 570],
+    3: [112, 360, 608],
+    4: [92, 266, 454, 628],
+  }[count];
+  const exits = {
+    2: [235, 485],
+    3: [178, 360, 542],
+    4: [150, 290, 430, 570],
+  }[count].map((x) => x + Math.round((rng() - 0.5) * (count === 4 ? 16 : 40)));
+
+  const amp = bowRoom(count);
+
+  return tops.map((topX, i) => {
+    const motif = MOTIFS[Math.floor(rng() * MOTIFS.length) % MOTIFS.length];
+    const [o1, o2] = motifOffsets(motif, amp * (0.6 + rng() * 0.4));
+    // Staggering the mouths reads as variety even where there is no room to bend.
+    const top = TUBE_TOP + Math.round(rng() * 40);
+    const exitX = exits[i];
+    const lerp = (t) => topX + (exitX - topX) * t;
+    return [
+      [topX, top],
+      [lerp(0.34) + o1, top + (exitY - top) * 0.36],
+      [lerp(0.7) + o2, top + (exitY - top) * 0.72],
+      [exitX, exitY],
+    ];
+  });
+}
+
 /**
  * Where the gates sit along a tube, nearest the outlet first.
  *
@@ -389,10 +419,11 @@ function inletControls(count, exitY, rng) {
  * leaves the reservoir empty and the vessel reads as a plain funnel. High
  * gates fill the bulb and leave a clean run of channel below it.
  */
-function gateFractions(n) {
-  if (n <= 1) return [0.46];
-  if (n === 2) return [0.6, 0.34];
-  return [0.72, 0.5, 0.28];
+function gateFractions(n, rng) {
+  const j = () => (rng() - 0.5) * 0.08;
+  if (n <= 1) return [0.46 + j()];
+  if (n === 2) return [0.6 + j(), 0.34 + j()];
+  return [0.72 + j(), 0.5 + j(), 0.28 + j()];
 }
 
 /**
@@ -418,6 +449,39 @@ function assertBore(level, index, built, bore) {
   }
 }
 
+/**
+ * Flip a level left-to-right.
+ *
+ * Free variety, and safe: mirroring swaps which side each blade throws to and
+ * which side each pit sits on at the same time, so the recorded solution —
+ * which is an order of payload *types*, not of directions — still holds.
+ */
+function mirrorLevel(lv) {
+  const fx = (x) => r1(W - x);
+  const flipPts = (pts) => pts.map(([x, y]) => [fx(x), y]);
+
+  for (const w of lv.walls) w.points = flipPts(w.points);
+  for (const t of lv.tubes) {
+    // Mirroring reverses the handedness, so the two edges swap roles.
+    const left = flipPts(t.left);
+    t.left = flipPts(t.right);
+    t.right = left;
+  }
+  for (const p of lv.pins) {
+    p.x = fx(p.x);
+    p.angle = r1(180 - p.angle);
+    p.out = [r1(-p.out[0]), p.out[1]];
+  }
+  for (const r of lv.receivers) {
+    r.x = fx(r.x);
+    r.charSide = -r.charSide;
+  }
+  for (const sp of lv.spawns) sp.items = sp.items.map(([x, y]) => [fx(x), y]);
+  for (const peg of lv.pegs) peg.x = fx(peg.x);
+  lv.mirrored = true;
+  return lv;
+}
+
 /* ------------------------------------------------------------------ */
 /* Level assembly                                                       */
 /* ------------------------------------------------------------------ */
@@ -440,14 +504,16 @@ function groupSize(rng, level) {
  * The difficulty ladder. Pipes and gates both climb with the level, so the
  * pin count rises monotonically from 3 to 11 across the run.
  */
-function difficultyFor(level, rng) {
+function difficultyFor(level) {
+  // Strictly non-decreasing: a player must never hit an easier board than the
+  // one before. Randomising a tier boundary used to walk the pin count
+  // backwards ten times across the run.
   if (level <= 6) return { pipes: 2, gates: 1 };
   if (level <= 15) return { pipes: 2, gates: 2 };
-  if (level <= 26) return { pipes: 3, gates: rng() < 0.4 ? 1 : 2 };
-  if (level <= 42) return { pipes: 3, gates: 2 };
-  if (level <= 58) return { pipes: 3, gates: rng() < 0.5 ? 2 : 3 };
-  if (level <= 74) return { pipes: 4, gates: 2 };
-  if (level <= 88) return { pipes: 4, gates: rng() < 0.5 ? 2 : 3 };
+  if (level <= 24) return { pipes: 2, gates: 3 };
+  if (level <= 36) return { pipes: 3, gates: 2 };
+  if (level <= 52) return { pipes: 3, gates: 3 };
+  if (level <= 72) return { pipes: 4, gates: 2 };
   return { pipes: 4, gates: 3 };
 }
 
@@ -466,8 +532,9 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
 
   const inletCount = pipes;
   // A wide reservoir up top narrowing into a channel — the flask silhouette.
-  const bulbHalf = { 2: 108, 3: 95, 4: 78 }[inletCount];
-  const spoutHalf = inletCount === 4 ? 56 : 65;
+  const wobble = (base, range) => base + Math.round((rng() - 0.5) * range);
+  const bulbHalf = wobble({ 2: 106, 3: 93, 4: 77 }[inletCount], 14);
+  const spoutHalf = wobble(inletCount === 4 ? 57 : 65, 12);
 
   // Two pits or three. With four pipes one pit is fed by two of them, which
   // is what keeps the routing on the proven bottom geometry.
@@ -492,19 +559,26 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   const [bowlL, bowlR] = bowl(
     bottom.bowlTop,
     bottom.neckTop,
-    { 2: 150, 3: 100, 4: 80 }[inletCount]
+    wobble({ 2: 150, 3: 100, 4: 82 }[inletCount], 34)
   );
   channel(bowlL, bowlR);
 
+  // The bore profile is a per-level identity: flasks, bellies and cones read
+  // as completely different glassware at a glance.
+  const shapeName = ['flask', 'belly', 'taper', 'pill', 'flask', 'belly'][
+    Math.floor(rng() * 6) % 6
+  ];
+  const profile = PROFILES[shapeName](bulbHalf, spoutHalf);
+
   const exitY = bottom.bowlTop - 12;
   const controls = inletControls(inletCount, exitY, rng);
-  const fractions = gateFractions(gateCount);
+  const fractions = gateFractions(gateCount, rng);
 
   // Each inlet: a curved tube, its gates, and a payload group behind each gate.
   const gatesByType = {};
   for (let i = 0; i < inletCount; i++) {
     const t = carried[i];
-    const built = vessel(controls[i], bulbHalf, spoutHalf, 0.42, WALL_T, 9);
+    const built = vesselProfiled(controls[i], profile, spoutHalf, WALL_T, 9);
     assertBore(level, i, built, spoutHalf * 2);
     channel(wall(built.walls[0].points, WALL_T), wall(built.walls[1].points, WALL_T));
 
@@ -536,78 +610,104 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   return { family, walls, tubes, pins, receivers, spawns, solution };
 }
 
-/** Bonus level: a hopper of coins tumbling through pegs into the vault. */
+/**
+ * Bonus level: a hopper of coins tumbling through pegs into the vault.
+ *
+ * Every knob here varies with the level — hopper width and depth, how far the
+ * neck drops, the peg grid, the corridor walls and the vault mouth — because
+ * ten identical coin rushes spaced ten levels apart is the most obvious kind
+ * of repetition there is.
+ */
 function buildVault(rng, level) {
   const walls = [];
   const pins = [];
   const receivers = [];
   const spawns = [];
   const pegs = [];
-
   const tubes = [];
   const channel = (left, right) => {
     walls.push(left, right);
     tubes.push({ left: left.points, right: right.points, t: left.t });
   };
 
-  // Curved hopper shoulders funnelling into a straight neck.
-  channel(
-    curveWall([[64, CHUTE_TOP], [64, 430], [140, 590], [300, 690]]),
-    curveWall([[656, CHUTE_TOP], [656, 430], [580, 590], [420, 690]])
-  );
-  channel(vwall(300, 690, 760), vwall(420, 690, 760));
+  const tier = level / 10; // 1..10
 
-  // Peg corridor, opening into a wide vault mouth so coins never bridge.
-  channel(vwall(96, 760, 1000), vwall(624, 760, 1000));
+  // --- hopper: width, shoulder depth and neck bore all shift per level ---
+  const hopHalf = 268 + Math.round(rng() * 34); // outer wall x-offset
+  const shoulderY = 380 + Math.round(rng() * 90);
+  const neckHalf = 52 + Math.round(rng() * 22);
+  const neckTop = 660 + Math.round(rng() * 50);
+  const neckBot = neckTop + 60 + Math.round(rng() * 40);
+
   channel(
-    curveWall([[96, 1000], [130, 1046], [214, 1070]]),
-    curveWall([[624, 1000], [590, 1046], [506, 1070]])
+    curveWall([[360 - hopHalf, CHUTE_TOP], [360 - hopHalf, shoulderY], [360 - neckHalf - 70, shoulderY + 130], [360 - neckHalf, neckTop]]),
+    curveWall([[360 + hopHalf, CHUTE_TOP], [360 + hopHalf, shoulderY], [360 + neckHalf + 70, shoulderY + 130], [360 + neckHalf, neckTop]])
+  );
+  channel(vwall(360 - neckHalf, neckTop, neckBot), vwall(360 + neckHalf, neckTop, neckBot));
+
+  // --- peg corridor: width, row count and spacing vary ---
+  const corrHalf = 250 + Math.round(rng() * 40);
+  const corrBot = 990 + Math.round(rng() * 30);
+  channel(vwall(360 - corrHalf, neckBot, corrBot), vwall(360 + corrHalf, neckBot, corrBot));
+
+  const mouthHalf = 130 + Math.round(rng() * 40);
+  channel(
+    curveWall([[360 - corrHalf, corrBot], [360 - corrHalf + 40, corrBot + 46], [360 - mouthHalf, corrBot + 70]]),
+    curveWall([[360 + corrHalf, corrBot], [360 + corrHalf - 40, corrBot + 46], [360 + mouthHalf, corrBot + 70]])
   );
 
-  // Peg columns are kept well clear of the corridor walls: a coin wedged
-  // between a peg and the wall would stall the whole cascade.
-  for (let r = 0; r < 4; r++) {
-    const y = 824 + r * 48;
-    const xs = r % 2 === 0 ? [184, 272, 360, 448, 536] : [228, 316, 404, 492];
-    for (const x of xs) pegs.push({ x, y, r: 11 });
+  const rows = 3 + (tier % 3 | 0);
+  const colGap = 82 + Math.round(rng() * 16);
+  const rowGap = 44 + Math.round(rng() * 12);
+  const pegR = 10 + Math.round(rng() * 3);
+  for (let r = 0; r < rows; r++) {
+    const y = neckBot + 60 + r * rowGap;
+    if (y > corrBot - 30) break;
+    const stagger = r % 2 === 0 ? 0 : colGap / 2;
+    // Keep pegs well clear of the corridor walls: a coin wedged between a peg
+    // and the wall stalls the whole cascade.
+    for (let x = 360 - corrHalf + 88 + stagger; x <= 360 + corrHalf - 88; x += colGap) {
+      pegs.push({ x: r1(x), y, r: pegR });
+    }
   }
 
-  const count = Math.min(260, 100 + level * 1.6) | 0;
+  // --- the cascade itself ---
+  const count = Math.min(260, 90 + level * 1.7) | 0;
   const r = PAYLOADS.coin.radius;
   const step = r * 2 + 3;
-  const perRow = Math.floor((656 - 64 - 28) / step);
+  const perRow = Math.floor((hopHalf * 2 - 34) / step);
   const items = [];
   for (let i = 0; i < count; i++) {
     const row = Math.floor(i / perRow);
     const col = i % perRow;
     const rowCount = Math.min(perRow, count - row * perRow);
     const rowW = (rowCount - 1) * step;
-    items.push([r1(360 - rowW / 2 + col * step + (rng() - 0.5) * 2), r1(410 - row * step)]);
+    items.push([r1(360 - rowW / 2 + col * step + (rng() - 0.5) * 2), r1(shoulderY - 40 - row * step)]);
   }
   spawns.push({ type: 'coin', r, items });
 
-  pins.push(gatePin('gHopper', 360, 700, 156, { out: [1, 0], thick: 16 }));
+  pins.push(gatePin('gHopper', 360, neckTop + 16, neckHalf * 2 + 40, { out: [1, 0], thick: 16 }));
   const solution = ['gHopper'];
   if (level >= 30) {
-    pins.push(gatePin('gChute', 360, 1062, 320, { out: [-1, 0], thick: 16 }));
+    pins.push(gatePin('gChute', 360, corrBot + 58, mouthHalf * 2 + 40, { out: [-1, 0], thick: 16 }));
     solution.push('gChute');
   }
 
   // Bonus rounds are a spectacle, not a precision test: banking most of the
   // cascade is enough, and every extra coin is still paid out.
-  receivers.push(receiver('coin', 360, 1074, 300, { charSide: 1, quota: 0.55 }));
+  receivers.push(receiver('coin', 360, corrBot + 74, mouthHalf * 2, { charSide: 1, quota: 0.55 }));
 
   return { family: 'vault', walls, tubes, pins, receivers, spawns, pegs, solution };
 }
 
-function buildLevel(level) {
-  const rng = mulberry32(level * 7919 + 13);
+function attemptLevel(level, attempt) {
+  const rng = mulberry32(level * 7919 + 13 + attempt * 104729);
 
   let core;
   if (level % 10 === 0) {
     core = buildVault(rng, level);
   } else {
-    const { pipes, gates } = difficultyFor(level, rng);
+    const { pipes, gates } = difficultyFor(level);
     core = buildPipeLevel(rng, level, pipes, gates);
   }
 
@@ -638,7 +738,7 @@ function buildLevel(level) {
 
   const payloadCount = Object.values(totals).reduce((a, b) => a + b, 0);
 
-  return {
+  const out = {
     id: level,
     name,
     chapter: chapter.name,
@@ -657,10 +757,96 @@ function buildLevel(level) {
     receivers: core.receivers,
     solution: core.solution,
   };
+
+  return rng() < 0.5 ? mirrorLevel(out) : out;
+}
+
+/** No payload may start inside the glass or inside a pin. */
+function spawnsAreClear(lv) {
+  for (const sp of lv.spawns) {
+    for (const [x, y] of sp.items) {
+      for (const w of lv.walls) {
+        for (let i = 0; i < w.points.length - 1; i++) {
+          const [x0, y0] = w.points[i];
+          const [x1, y1] = w.points[i + 1];
+          if (distToSeg(x, y, x0, y0, x1, y1) < sp.r + w.t / 2) return false;
+        }
+      }
+      for (const p of lv.pins) {
+        if (distToSeg(x, y, ...pinSegment(p)) < sp.r + p.thick / 2) return false;
+      }
+    }
+  }
+  return true;
+}
+
+/** Coarse silhouette, used to keep consecutive levels from looking alike. */
+function silhouette(lv, cell = 40) {
+  const cells = new Set();
+  for (const w of lv.walls) {
+    for (const [x, y] of w.points) cells.add(`${Math.round(x / cell)},${Math.round(y / cell)}`);
+  }
+  return cells;
+}
+
+function overlap(a, b) {
+  let shared = 0;
+  for (const v of a) if (b.has(v)) shared++;
+  return shared / (a.size + b.size - shared || 1);
+}
+
+/**
+ * Build a level, then prove it before keeping it.
+ *
+ * Level shapes vary a lot now — bore profiles, curve motifs, mirroring,
+ * jittered proportions — and some combinations simply do not play: a payload
+ * parks on a bend, or a straggler crosses a blade flip. Rather than pinning
+ * the variety back down to the handful of shapes known to be safe, every
+ * candidate is played by the solver and re-rolled if it fails. A level only
+ * reaches the JSON if it is winnable, and preferably winnable without waste.
+ */
+function buildLevel(level, prevShape) {
+  let fallback = null;
+  let lookalike = null;
+
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const candidate = attemptLevel(level, attempt);
+
+    // Cheap rejections first: no point simulating a broken board.
+    if (!spawnsAreClear(candidate)) continue;
+
+    const report = simulateLevel(candidate);
+    if (!report.solved) continue;
+
+    const shape = silhouette(candidate);
+    const tooSimilar = prevShape && overlap(prevShape, shape) > 0.72;
+
+    if (report.clean && !tooSimilar) return { level: candidate, attempt, quality: 'clean', shape };
+    if (report.clean && !lookalike) lookalike = { level: candidate, attempt, quality: 'lookalike', shape };
+    if (!fallback) fallback = { level: candidate, attempt, quality: 'messy', shape };
+  }
+
+  if (lookalike) return lookalike;
+
+  if (fallback) return fallback;
+  // Nothing played. Hand back attempt 0 so the build fails loudly downstream
+  // rather than silently shipping a level nobody can finish.
+  const last = attemptLevel(level, 0);
+  return { level: last, attempt: 0, quality: 'unsolved', shape: silhouette(last) };
 }
 
 const levels = [];
-for (let i = 1; i <= 100; i++) levels.push(buildLevel(i));
+const quality = { clean: 0, lookalike: 0, messy: 0, unsolved: 0 };
+let totalAttempts = 0;
+let prevShape = null;
+for (let i = 1; i <= 100; i++) {
+  const built = buildLevel(i, prevShape);
+  prevShape = built.shape;
+  quality[built.quality]++;
+  totalAttempts += built.attempt + 1;
+  levels.push(built.level);
+  if (built.quality === 'unsolved') console.warn(`  ! L${i} could not be made solvable`);
+}
 
 mkdirSync(dirname(OUT), { recursive: true });
 const doc = {
@@ -675,5 +861,8 @@ writeFileSync(OUT, JSON.stringify(doc));
 const pins = levels.reduce((n, l) => n + l.pins.length, 0);
 console.log(
   `Wrote ${levels.length} levels to ${OUT} (${(JSON.stringify(doc).length / 1024).toFixed(1)} KB)\n` +
-    `pins: ${levels[0].pins.length} at L1 → ${levels[98].pins.length} at L99, ${pins} total`
+    `pins: ${levels[0].pins.length} at L1 → ${levels[98].pins.length} at L99, ${pins} total\n` +
+    `solver: ${quality.clean} clean, ${quality.lookalike} clean-but-similar, ` +
+    `${quality.messy} playable-but-messy, ${quality.unsolved} unsolved ` +
+    `(${(totalAttempts / levels.length).toFixed(1)} attempts/level)`
 );

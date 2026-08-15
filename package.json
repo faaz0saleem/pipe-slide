@@ -14,7 +14,8 @@
     "package": "npm run build && node tools/make-zip.mjs",
     "simulate": "node tools/simulate-levels.mjs",
     "smoke": "node tools/smoke-test.mjs",
-    "single": "node tools/make-single.mjs"
+    "single": "node tools/make-single.mjs",
+    "variety": "node tools/variety-report.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"

@@ -171,14 +171,64 @@ export function tube(ctrl, bore, t, stepsPerSpan = 9) {
 }
 
 /**
- * A vessel: a tube whose bore swells into a reservoir near the top and
- * narrows into a spout below, like laboratory glassware. `bulbHalf` is the
- * widest half-bore, `spoutHalf` the narrowest, and `shoulder` where along the
- * length the transition happens.
+ * Bore profiles: how a vessel's width changes down its length. These are what
+ * give levels distinct silhouettes rather than all reading as the same funnel.
  *
- * The bend guard uses the *spout* half-bore, because that is the only part
- * that curves; a wide reservoir is always drawn on a near-straight run.
+ *   flask  wide reservoir up top, easing into a narrow spout
+ *   belly  narrow neck, a bulge in the middle, narrow again
+ *   taper  a steady cone from top to bottom
+ *   pill   near-constant narrow bore with a slight swell
  */
+const ease = (u) => u * u * (3 - 2 * u);
+const clamp01 = (u) => Math.max(0, Math.min(1, u));
+
+export const PROFILES = {
+  flask: (wide, narrow, shoulder = 0.42) => (f) =>
+    f <= shoulder ? wide : wide + (narrow - wide) * ease(clamp01((f - shoulder) / 0.22)),
+
+  belly: (wide, narrow) => (f) => {
+    const swell = Math.sin(clamp01(f) * Math.PI); // 0 at both ends, 1 mid
+    return narrow + (wide - narrow) * ease(swell);
+  },
+
+  taper: (wide, narrow) => (f) => wide + (narrow - wide) * ease(clamp01(f)),
+
+  pill: (wide, narrow) => (f) => {
+    const swell = Math.sin(clamp01(f) * Math.PI);
+    return narrow + (wide - narrow) * 0.45 * ease(swell);
+  },
+};
+
+/**
+ * A vessel: a tube whose bore varies down its length, like glassware.
+ * `profile` is a function of the 0..1 arc position returning the half-bore
+ * there; `narrowest` is the tightest it ever gets, which is what the bend
+ * guard has to respect.
+ */
+export function vesselProfiled(ctrl, profile, narrowest, t, stepsPerSpan = 9) {
+  const safeRadius = narrowest * 1.25;
+
+  let control = ctrl.map((p) => p.slice());
+  let path = smoothPath(control, stepsPerSpan);
+  let relaxed = 0;
+  while (minRadius(path) < safeRadius && relaxed < 14) {
+    control = relax(control, 0.18);
+    path = smoothPath(control, stepsPerSpan);
+    relaxed++;
+  }
+
+  return {
+    path,
+    halfAt: profile,
+    relaxed,
+    walls: [
+      { points: offsetProfiled(path, profile, 1), t },
+      { points: offsetProfiled(path, profile, -1), t },
+    ],
+  };
+}
+
+/** Back-compat wrapper: the original flask-only vessel. */
 export function vessel(ctrl, bulbHalf, spoutHalf, shoulder, t, stepsPerSpan = 12) {
   const safeRadius = spoutHalf * 1.25;
 
@@ -191,13 +241,7 @@ export function vessel(ctrl, bulbHalf, spoutHalf, shoulder, t, stepsPerSpan = 12
     relaxed++;
   }
 
-  // Flat reservoir, smooth shoulder, flat spout.
-  const ease = (u) => u * u * (3 - 2 * u);
-  const halfAt = (f) => {
-    if (f <= shoulder) return bulbHalf;
-    const u = Math.min(1, (f - shoulder) / 0.22);
-    return bulbHalf + (spoutHalf - bulbHalf) * ease(u);
-  };
+  const halfAt = PROFILES.flask(bulbHalf, spoutHalf, shoulder);
 
   return {
     path,

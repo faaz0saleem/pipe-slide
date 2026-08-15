@@ -41,12 +41,12 @@ const shot = async (name, setup, settleSteps=0) => {
   console.log('shot', name);
 };
 
-await shot('menu', () => undefined);
-for (const id of [1, 30, 60, 95]) {
+
+for (const id of [4, 12, 22, 40, 55, 78]) {
   await shot(`level-${id}`, (lv)=>{ const g=window.game;
     g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Game',{levelId:lv}); }, 90);
 }
-await shot('map', ()=>{ const g=window.game; g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Map',{focus:1}); });
-await shot('shop', ()=>{ const g=window.game; g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Shop',{from:'Menu'}); });
+if (0) await shot('map', ()=>{ const g=window.game; g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Map',{focus:1}); });
+if (0) await shot('shop', ()=>{ const g=window.game; g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Shop',{from:'Menu'}); });
 
 await browser.close(); server.close(); process.exit(0);
