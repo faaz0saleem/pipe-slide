@@ -42,6 +42,23 @@ export const PHYSICS = {
   payloadDensity: 0.0016,
 };
 
+/**
+ * Economy. Coins are deliberately scarce: the whole run of 100 levels pays
+ * out about 500, so a skip is a real sacrifice and shop prices are set
+ * against that budget rather than against idle-game inflation.
+ */
+export const ECONOMY = {
+  startingCoins: 10,
+  perLevel: 5,
+  perStar: 2, // small bonus for a clean run
+  skipCost: 50,
+  hintCost: 8,
+  chestReward: 25,
+  dailyBase: 6,
+  dailyPerStreak: 3,
+  bonusLevelPerCoin: 0.08, // coin-rush payout per coin banked
+};
+
 /** Star thresholds are computed per level; these are the labels. */
 export const STAR_RULES = [
   'Finish the level',

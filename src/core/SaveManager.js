@@ -8,7 +8,7 @@
 
 import crazy from './CrazySDK.js';
 import { DEFAULT_EQUIPPED, freeItems } from '../config/ShopCatalog.js';
-import { TOTAL_LEVELS } from '../config/GameConfig.js';
+import { TOTAL_LEVELS, ECONOMY } from '../config/GameConfig.js';
 
 const KEY = 'pipeslide.save.v1';
 const SAVE_DEBOUNCE = 400;
@@ -31,7 +31,7 @@ function defaults() {
   return {
     version: 1,
     level: 1, // highest unlocked
-    coins: 0,
+    coins: ECONOMY.startingCoins,
     stars: {}, // levelId -> 0..3
     owned: freeItems(),
     equipped: { ...DEFAULT_EQUIPPED },
@@ -166,11 +166,13 @@ class SaveManager {
     const improved = stars > prev;
     if (improved) this.data.stars[levelId] = stars;
 
-    const firstClear = prev === 0;
+    // A skipped level (0 stars) unlocks the next one but never counts as a
+    // clear, so it earns no chest progress and can still be starred later.
+    const firstClear = prev === 0 && stars > 0;
     const unlockedNext = levelId >= this.data.level && levelId < TOTAL_LEVELS;
     if (unlockedNext) this.data.level = levelId + 1;
 
-    this.data.stats.wins += 1;
+    if (stars > 0) this.data.stats.wins += 1;
 
     // Every fifth first-clear pops a chest.
     let chest = false;
@@ -245,7 +247,11 @@ class SaveManager {
     const available = gap >= 1 || this.data.daily.last === null;
     const streak = gap === 1 ? this.data.daily.streak : gap === 0 ? this.data.daily.streak : 0;
     const nextStreak = available ? Math.min(7, streak + 1) : streak;
-    return { available, streak: nextStreak, reward: 40 + nextStreak * 35 };
+    return {
+      available,
+      streak: nextStreak,
+      reward: ECONOMY.dailyBase + nextStreak * ECONOMY.dailyPerStreak,
+    };
   }
 
   claimDaily() {

@@ -7,7 +7,7 @@
  */
 
 import Phaser from 'phaser';
-import { WIDTH, HEIGHT, DEPTH, TOTAL_LEVELS } from '../config/GameConfig.js';
+import { WIDTH, HEIGHT, DEPTH, TOTAL_LEVELS, ECONOMY } from '../config/GameConfig.js';
 import { UI } from '../config/Palette.js';
 import Levels from '../core/Levels.js';
 import save from '../core/SaveManager.js';
@@ -259,7 +259,7 @@ export default class ResultScene extends Phaser.Scene {
 
   _openChest() {
     const cx = WIDTH / 2;
-    const reward = 120 + save.data.level * 6;
+    const reward = ECONOMY.chestReward;
 
     const c = this.add.container(cx, 640).setDepth(DEPTH.popup + 5);
     const glow = this.add.image(0, 0, 'fx_glow').setScale(4).setTint(UI.gold).setAlpha(0.7);
@@ -328,7 +328,7 @@ export default class ResultScene extends Phaser.Scene {
     const cx = WIDTH / 2;
     const root = this.add.container(0, 0).setDepth(DEPTH.popup);
 
-    root.add(panel(this, cx, 640, 600, 620, { fill: 0x2a1230, stroke: UI.rose, strokeAlpha: 0.6 }));
+    root.add(panel(this, cx, 660, 620, 740, { fill: 0x2a1230, stroke: UI.rose, strokeAlpha: 0.6 }));
 
     const title = label(this, cx, 430, 'NOT QUITE!', {
       size: 58,
@@ -361,9 +361,9 @@ export default class ResultScene extends Phaser.Scene {
     );
 
     root.add(
-      button(this, cx, 668, {
+      button(this, cx, 640, {
         w: 420,
-        h: 96,
+        h: 92,
         text: 'TRY AGAIN',
         size: 34,
         color: UI.mint,
@@ -372,13 +372,45 @@ export default class ResultScene extends Phaser.Scene {
       }).pulse()
     );
 
+    // Paying to move on is the escape hatch for a level that has become a
+    // wall. It is priced at ten levels' earnings so it stays a real decision.
+    const canAfford = save.coins >= ECONOMY.skipCost;
+    const isLast = this.levelId >= TOTAL_LEVELS;
+    if (!isLast) {
+      this.skipBtn = button(this, cx, 740, {
+        w: 420,
+        h: 70,
+        text: `SKIP LEVEL · ${ECONOMY.skipCost}`,
+        size: 24,
+        color: canAfford ? UI.gold : UI.slate,
+        textColor: canAfford ? '#3a2400' : '#8892be',
+        radius: 20,
+        icon: 'p_coin',
+        iconScale: 0.5,
+        onClick: () => this._skip(),
+      });
+      root.add(this.skipBtn);
+
+      root.add(
+        label(
+          this,
+          cx,
+          790,
+          canAfford
+            ? `You have ${save.coins} coins`
+            : `You need ${ECONOMY.skipCost - save.coins} more coins`,
+          { size: 17, color: canAfford ? '#8892be' : '#c98fa0' }
+        )
+      );
+    }
+
     const small = [
       ['SHOP', UI.gold, '#3a2400', () => this._toShop()],
       ['MAP', UI.slateLight, '#ffffff', () => this._toMap()],
     ];
     small.forEach(([text, color, tc, fn], i) => {
       root.add(
-        button(this, cx + (i - 0.5) * 200, 782, {
+        button(this, cx + (i - 0.5) * 200, 856, {
           w: 180,
           h: 64,
           text,
@@ -392,7 +424,7 @@ export default class ResultScene extends Phaser.Scene {
     });
 
     root.add(
-      label(this, cx, 872, `Delivered ${this.result.delivered ?? 0} · Lost ${this.result.lost ?? 0}`, {
+      label(this, cx, 930, `Delivered ${this.result.delivered ?? 0} · Wasted ${this.result.lost ?? 0}`, {
         size: 19,
         color: '#8892be',
       })
@@ -422,6 +454,30 @@ export default class ResultScene extends Phaser.Scene {
       this.busy = false;
     }
 
+    this._leave(() => {
+      this.scene.stop('Result');
+      this.scene.stop('Game');
+      this.scene.start('Game', { levelId: nextId });
+    });
+  }
+
+  /** Buy your way past a level that has become a wall. */
+  _skip() {
+    if (this.busy) return;
+    if (!save.spendCoins(ECONOMY.skipCost)) {
+      sound.play('error');
+      this.skipBtn.setLabel('NOT ENOUGH COINS');
+      this.time.delayedCall(1400, () =>
+        this.skipBtn?.setLabel(`SKIP LEVEL · ${ECONOMY.skipCost}`)
+      );
+      return;
+    }
+    sound.play('buy');
+    // Skipping unlocks the next level but banks no stars for this one.
+    save.completeLevel(this.levelId, 0);
+    save.flush();
+
+    const nextId = Math.min(TOTAL_LEVELS, this.levelId + 1);
     this._leave(() => {
       this.scene.stop('Result');
       this.scene.stop('Game');

@@ -48,8 +48,15 @@ export default class Payload {
     this.lost = false;
     this.style = PAYLOAD_STYLE[type];
 
+    // Payload art is drawn at ART_SCALE and displayed at 1/ART_SCALE, and on a
+    // Matter game object setScale resizes the *body* as well as the sprite.
+    // Pre-multiply the collider so the body ends up at its true radius —
+    // without this every payload is silently half-size and slips through the
+    // glass.
+    const collider = radius * (COLLIDER_RADIUS[type] ?? 1) * ART_SCALE;
+
     this.sprite = scene.matter.add.image(x, y, payloadKey(type), null, {
-      shape: { type: 'circle', radius: radius * (COLLIDER_RADIUS[type] ?? 1) },
+      shape: { type: 'circle', radius: collider },
       friction: PHYSICS.payloadFriction,
       frictionStatic: PHYSICS.payloadFrictionStatic,
       frictionAir: PHYSICS.payloadAirFriction,

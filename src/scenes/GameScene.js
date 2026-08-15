@@ -7,7 +7,7 @@
  */
 
 import Phaser from 'phaser';
-import { WIDTH, HEIGHT, GROUND_Y, DEPTH } from '../config/GameConfig.js';
+import { WIDTH, HEIGHT, GROUND_Y, DEPTH, ECONOMY } from '../config/GameConfig.js';
 import { PAYLOAD_STYLE } from '../config/Palette.js';
 
 import Levels from '../core/Levels.js';
@@ -26,8 +26,12 @@ import { floatText, label } from '../ui/Ui.js';
 const { Sleeping } = Phaser.Physics.Matter.Matter;
 
 const COMBO_WINDOW = 1100;
-const SETTLE_SPEED = 14;
-const HINT_COST = 30;
+// Matter velocities are px per 60Hz step, so free-fall peaks around 18 and a
+// payload gliding down a blade sits near 4. Anything above walking pace means
+// the board is still resolving; 14 counted sliding payloads as settled and let
+// the stuck detector end levels mid-flow.
+const SETTLE_SPEED = 1.2;
+const HINT_COST = ECONOMY.hintCost;
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -82,6 +86,11 @@ export default class GameScene extends Phaser.Scene {
     this._spawnPayloads();
 
     this.matter.world.on('collisionstart', this._onCollisionStart, this);
+    // collisionstart fires once, at the instant the payload's *edge* touches
+    // the pit sensor — its centre is still above the lip, so the containment
+    // check rejects it and no second chance ever arrives. Re-checking while
+    // the overlap persists is what actually lands the delivery.
+    this.matter.world.on('collisionactive', this._onCollisionActive, this);
 
     this.scene.launch('Hud', { levelId: this.levelId });
     this.hud = this.scene.get('Hud');
@@ -299,6 +308,23 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Cheap pass over ongoing overlaps: pit sensors only. */
+  _onCollisionActive(event) {
+    if (this.finished) return;
+
+    for (const pair of event.pairs) {
+      const { bodyA, bodyB } = pair;
+      const receiver = bodyA.receiverRef || bodyB.receiverRef;
+      if (!receiver) continue;
+
+      const payloadBody = bodyA.label === 'payload' ? bodyA : bodyB.label === 'payload' ? bodyB : null;
+      if (!payloadBody) continue;
+
+      const payload = payloadBody.gameObject?.getData?.('payload');
+      if (payload && !payload.resolved) this._resolveDelivery(receiver, payload);
+    }
+  }
+
   /** Throttled impact tick so a coin avalanche does not become white noise. */
   _clack(payload) {
     const now = this.time.now;
@@ -334,12 +360,10 @@ export default class GameScene extends Phaser.Scene {
     this.bestCombo = Math.max(this.bestCombo, this.combo);
 
     if (this.level.bonus) {
-      this.coinsEarned += 1 + Math.floor(this.combo / 8);
-      this.hud?.events.emit('coins-preview', this.coinsEarned);
+      this.coinsEarned += 1;
     } else {
       sound.play('deliver', { combo: this.combo });
       if (this.combo >= 3) {
-        this.coinsEarned += this.combo;
         floatText(this, x, y - 30, `COMBO x${this.combo}`, {
           color: '#ffd54a',
           size: 30,
@@ -489,12 +513,10 @@ export default class GameScene extends Phaser.Scene {
     if (this.level.bonus) stars = this.lostCount === 0 ? 3 : this.deliveredCount > 0 ? 2 : 1;
 
     // Payout.
-    let coins = this.coinsEarned;
-    if (this.level.bonus) {
-      coins = Math.round(this.coinsEarned * 1.5);
-    } else {
-      coins += this.level.reward + this.deliveredCount * 2 + (stars - 1) * 12;
-    }
+    // Flat, small payout: coins are scarce on purpose.
+    const coins = this.level.bonus
+      ? Math.max(1, Math.round(this.coinsEarned * ECONOMY.bonusLevelPerCoin))
+      : ECONOMY.perLevel + (stars - 1) * ECONOMY.perStar;
 
     for (const c of this.characters) c.cheer();
     this._winFx();
@@ -701,6 +723,7 @@ export default class GameScene extends Phaser.Scene {
     // at this point crashes. Only detach our own listeners.
     if (this.matter?.world) {
       this.matter.world.off('collisionstart', this._onCollisionStart, this);
+      this.matter.world.off('collisionactive', this._onCollisionActive, this);
     }
     this.events.off('hud-restart');
     this.events.off('hud-hint');

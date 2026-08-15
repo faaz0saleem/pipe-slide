@@ -62,25 +62,42 @@ await step('fps =', async () => {
 const solved = await page.evaluate(async () => {
   const gs = __g.scene.getScene('Game');
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const quiet = async (timeout) => {
-    const t0 = Date.now();
-    while (Date.now() - t0 < timeout) {
-      await sleep(500);
+  // Headless chromium renders at a few FPS under software GL, far too slow for
+  // the simulation to finish in wall-clock time. Drive the physics directly so
+  // this stays an end-to-end test rather than a frame-rate benchmark.
+  const pump = (steps) => {
+    for (let i = 0; i < steps; i++) gs.matter.world.step(1000 / 60);
+  };
+  const quiet = async (maxSteps) => {
+    for (let done = 0; done < maxSteps; done += 30) {
+      pump(30);
+      await sleep(0);
       if (gs.finished) return;
-      const moving = gs.payloads.some((p) => !p.resolved && p.sprite && p.speed > 14);
+      const moving = gs.payloads.some((p) => !p.resolved && p.sprite && p.speed > 0.4);
       if (!moving) return;
     }
   };
+  // Diagnostics: are collision events reaching the scene at all?
+  window.__hits = 0;
+  window.__res = [];
+  gs.matter.world.on('collisionstart', () => { window.__hits++; });
+  const origResolve = gs._resolveDelivery.bind(gs);
+  gs._resolveDelivery = (r, p) => {
+    window.__res.push(`${p.type}->${r.accepts} at ${p.y | 0} contains=${r.contains(p.x, p.y)}`);
+    return origResolve(r, p);
+  };
+  window.__sensors = gs.receivers.map((r) => `${r.accepts}:sensor@${r.sensor.position.y | 0} ref=${!!r.sensor.receiverRef} inWorld=${gs.matter.world.localWorld.bodies.includes(r.sensor)}`);
+
   const out = [];
-  await quiet(15000);
+  await quiet(600);
   for (const id of gs.level.solution) {
     const pin = gs.pins.find((p) => p.id === id);
     out.push(`${id}:${pin ? pin.tryPull() : 'missing'}`);
-    await sleep(1500);
-    await quiet(60000);
+    await quiet(1800);
   }
+  await quiet(900);
   const t0 = Date.now();
-  while (!__g.scene.isActive('Result') && Date.now() - t0 < 30000) await sleep(500);
+  while (!__g.scene.isActive('Result') && Date.now() - t0 < 8000) await sleep(250);
   const alive = gs.payloads.filter((p) => !p.resolved && p.sprite).map((p) => `${p.type}@${p.x|0},${p.y|0}`);
   return { pulls: out, finished: gs.finished, delivered: gs.deliveredCount, alive, receivers: gs.receivers.map((r)=>`${r.accepts} ${r.delivered}/${r.required}`), result: __g.scene.isActive('Result') };
 });
@@ -88,7 +105,11 @@ console.log('level 1 result:', JSON.stringify(solved));
 // Result-scene launch timing is unreliable at throttled-headless frame rates,
 // so the pass criterion is the win state itself; ResultScene is exercised
 // directly in the sweep below.
-if (!solved.finished || solved.delivered < 8) { console.error('level 1 did not finish cleanly'); process.exit(1); }
+const quotasMet = solved.receivers.every((r) => {
+  const [got, need] = r.split(' ')[1].split('/').map(Number);
+  return got >= need;
+});
+if (!solved.finished || !quotasMet) { console.error('level 1 did not finish cleanly'); process.exit(1); }
 if (errors.length) { console.error('ERRORS', errors); process.exit(1); }
 
 // Map + shop render without errors.

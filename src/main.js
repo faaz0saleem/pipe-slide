@@ -37,6 +37,11 @@ const game = new Phaser.Game({
       velocityIterations: 6,
       constraintIterations: 3,
       debug: false,
+      // A variable timestep makes the simulation depend on the device's frame
+      // rate: on a slow machine payloads tunnel through the glass and levels
+      // become unsolvable. Stepping a fixed 60Hz means a slow device runs the
+      // puzzle in slow motion instead of running it wrong.
+      runner: { isFixed: true, fps: 60, maxUpdates: 2 },
     },
   },
   fps: { target: 60, forceSetTimeOut: false },

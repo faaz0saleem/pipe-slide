@@ -6,14 +6,14 @@
  */
 
 import Phaser from 'phaser';
-import { WIDTH, HEIGHT, DEPTH, FONT } from '../config/GameConfig.js';
+import { WIDTH, HEIGHT, DEPTH, ECONOMY } from '../config/GameConfig.js';
 import { UI } from '../config/Palette.js';
 import Levels from '../core/Levels.js';
 import save from '../core/SaveManager.js';
 import sound from '../core/SoundKit.js';
 import { button, iconButton, coinPill, panel, label, progressBar, scrim, floatText } from '../ui/Ui.js';
 
-const HINT_COST = 30;
+const HINT_COST = ECONOMY.hintCost;
 
 export default class HudScene extends Phaser.Scene {
   constructor() {
