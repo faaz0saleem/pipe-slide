@@ -14,9 +14,13 @@ pipes into the pits that want them — and never into the ones that don't.
   each by the end — so pin count rises from 3 at L1 to 14 at L99.
   Every tenth level is a bonus **Coin Rush**: a hopper of coins cascading
   through a peg field into a vault.
-- **Physics that's been played**: `npm run simulate` rebuilds each level in
-  headless matter-js and plays its recorded solution — all 100 must pass
-  before a build ships (`prebuild` enforces it).
+- **Levels that prove themselves**: the generator plays every candidate level
+  in headless matter-js before keeping it, and re-rolls the shape if it is
+  unsolvable, if a payload would spawn inside the glass, or if it looks too
+  much like the level before it. That is what lets the shapes vary freely —
+  bore profiles, curve motifs, mirroring, jittered proportions — without
+  gambling on whether they work. `npm run simulate` re-checks the whole book
+  as a build gate; `npm run variety` measures how distinct they actually are.
 - **Receivers & characters**: fire pit / food stall / gem stand / vault / slag
   pit, each with a waiting character (shivering, hungry, …) that cheers, hops
   and throws hearts when their pit is satisfied — and slumps under a little
@@ -44,6 +48,7 @@ pipes into the pits that want them — and never into the ones that don't.
 | `npm run levels`   | regenerate `public/levels/levels.json` |
 | `npm run verify`   | static sanity checks on the level data |
 | `npm run simulate` | headless matter-js playthrough of all 100 levels |
+| `npm run variety`  | measure how distinct the levels are from each other |
 | `npm run build`    | levels + verify + simulate + production build |
 | `npm run smoke`    | boots the built game in headless Chromium and plays level 1 |
 | `node tools/shots.mjs` | capture PNGs of the menu, some levels, the map and the shop |
