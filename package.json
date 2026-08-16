@@ -17,7 +17,8 @@
     "hit-test": "node tools/hit-test.mjs",
     "single": "node tools/make-single.mjs",
     "variety": "node tools/variety-report.mjs",
-    "difficulty": "node tools/difficulty-report.mjs"
+    "difficulty": "node tools/difficulty-report.mjs",
+    "sheet": "node tools/contact-sheet.mjs"
   },
   "dependencies": {
     "phaser": "^3.90.0"
