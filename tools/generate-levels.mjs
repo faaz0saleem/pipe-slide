@@ -551,7 +551,8 @@ function gateFractions(n, rng) {
   const j = () => (rng() - 0.5) * 0.08;
   if (n <= 1) return [0.46 + j()];
   if (n === 2) return [0.6 + j(), 0.34 + j()];
-  return [0.72 + j(), 0.5 + j(), 0.28 + j()];
+  if (n === 3) return [0.72 + j(), 0.5 + j(), 0.28 + j()];
+  return [0.79 + j(), 0.61 + j(), 0.43 + j(), 0.23 + j()];
 }
 
 /**
@@ -664,27 +665,68 @@ function slackFor(level) {
   return level <= 20 ? 3 : 2;
 }
 
-function groupSize(rng, level) {
-  if (level <= 12) return irange(rng, 2, 3);
-  if (level <= 45) return irange(rng, 3, 4);
-  return irange(rng, 4, 5);
+function groupSize(rng, level, gates) {
+  const [lo, hi] = level <= 12 ? [2, 3] : level <= 45 ? [3, 4] : [4, 5];
+  // A tube carrying four stacks has to fit them all below its mouth; the more
+  // gates it has, the smaller each group must be.
+  return Math.max(2, irange(rng, lo, hi) - (gates >= 4 ? 2 : gates >= 3 ? 1 : 0));
 }
 
 /**
- * The difficulty ladder. Pipes and gates both climb with the level, so the
- * pin count rises monotonically from 3 to 11 across the run.
+ * The difficulty ladder.
+ *
+ * Pipes set the stage, but the thing that actually climbs is a *budget* of
+ * gates for the whole board, spent across the pipes by shareGates(). Handing
+ * every pipe the same fixed number of gates gave only seven distinct board
+ * sizes across ninety levels, and left the last thirty-four of them at exactly
+ * fourteen pins — which is the "every level is the same" the player sees.
+ *
+ * The budget rises a step at a time within each band, plus a one-gate wobble
+ * so consecutive levels rarely match. The wobble can cost a single pin against
+ * the level before, never more, so the run never feels like it went backwards.
  */
 function difficultyFor(level) {
-  // Strictly non-decreasing: a player must never hit an easier board than the
-  // one before. Randomising a tier boundary used to walk the pin count
-  // backwards ten times across the run.
-  if (level <= 5) return { pipes: 2, gates: 1 };
-  if (level <= 13) return { pipes: 2, gates: 2 };
-  if (level <= 21) return { pipes: 2, gates: 3 };
-  if (level <= 32) return { pipes: 3, gates: 2 };
-  if (level <= 46) return { pipes: 3, gates: 3 };
-  if (level <= 62) return { pipes: 4, gates: 2 };
-  return { pipes: 4, gates: 3 };
+  const BANDS = [
+    { until: 21, pipes: 2, from: 2, to: 6 },
+    { until: 48, pipes: 3, from: 5, to: 10 },
+    { until: 100, pipes: 4, from: 9, to: 16 },
+  ];
+  let start = 1;
+  for (const b of BANDS) {
+    if (level > b.until) {
+      start = b.until + 1;
+      continue;
+    }
+    const span = Math.max(1, b.until - start);
+    const climb = b.from + Math.round(((level - start) / span) * (b.to - b.from));
+    // The wobble may not push a band past its own ceiling: a band ending one
+    // gate high and the next starting at its floor is the one place the run
+    // could drop by two, which reads as the game getting easier.
+    const wobble = (level * 7) % 3 === 0 ? 1 : 0;
+    return { pipes: b.pipes, gates: Math.min(b.to, b.pipes * 4, climb + wobble) };
+  }
+  return { pipes: 4, gates: 16 };
+}
+
+/**
+ * Hand a gate budget out across the pipes, unevenly.
+ *
+ * Every pipe used to carry the same count, which is why four channels read as
+ * four copies of one channel. An uneven split lets one tube be crammed with
+ * four stacks while its neighbour holds a single one, so the boards differ
+ * from each other *and* internally. Every pipe keeps at least one gate — a
+ * pipe with none holds no payload and is just scenery.
+ */
+function shareGates(rng, pipes, budget, max = 4) {
+  const out = new Array(pipes).fill(1);
+  let left = Math.max(0, Math.min(budget, pipes * max) - pipes);
+  while (left > 0 && out.some((n) => n < max)) {
+    const i = Math.floor(rng() * pipes) % pipes;
+    if (out[i] >= max) continue;
+    out[i]++;
+    left--;
+  }
+  return out;
 }
 
 function buildPipeLevel(rng, level, pipes, gateCount) {
@@ -752,13 +794,15 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   );
   channel(bowlL, bowlR);
 
-  // Bore profile is picked per *pipe*, not per level: a flask standing next to
-  // an hourglass next to a gourd is what makes two boards read as different
-  // pieces of apparatus rather than the same one nudged around.
-  const SHAPES = ['flask', 'belly', 'taper', 'pill', 'double', 'gourd', 'cone', 'hourglass'];
-  const pipeProfile = (i) => {
-    const name = SHAPES[Math.floor(rng() * SHAPES.length) % SHAPES.length];
-    // Each pipe also gets its own proportions, so even two flasks differ.
+  // Bore profile is picked per *pipe*, and no two pipes on a board may share
+  // one: a flask standing next to an hourglass next to a gourd is what makes
+  // two boards read as different pieces of apparatus rather than the same one
+  // nudged around. Drawing with replacement put two identical vessels side by
+  // side often enough to undo the effect, so the pool empties as it is used.
+  const pool = Object.keys(PROFILES);
+  const pipeProfile = () => {
+    const name = pool.splice(Math.floor(rng() * pool.length) % pool.length, 1)[0];
+    // Each pipe also gets its own proportions, so even two flasks would differ.
     const wide = bulbHalf + Math.round((rng() - 0.5) * 12);
     const narrow = Math.min(wide - 14, spoutHalf + Math.round((rng() - 0.5) * 10));
     return { fn: PROFILES[name](wide, narrow), narrow, name };
@@ -768,9 +812,9 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   // Profiles are settled before the curves are drawn: how far a pipe may swing
   // depends on how fat it is at that depth, and a narrowed spout has room a
   // reservoir does not.
-  const shapes = Array.from({ length: inletCount }, (_, i) => pipeProfile(i));
+  const shapes = Array.from({ length: inletCount }, pipeProfile);
   const controls = inletControls(inletCount, exitY, rng, shapes.map((s) => s.fn));
-  const fractions = gateFractions(gateCount, rng);
+  const perPipe = shareGates(rng, inletCount, gateCount);
 
   // Each inlet: a curved tube, its gates, and a payload group behind each gate.
   const gatesByType = {};
@@ -785,6 +829,9 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
 
     const len = pathLength(built.path);
     const boreAt = (f) => built.halfAt(f) * 2;
+    // Each pipe has its own share of the board's gate budget, so one channel
+    // can be stacked four deep next to one holding a single group.
+    const fractions = gateFractions(perPipe[i], rng);
     const gates = fractions.map((f, gi) =>
       gateAcross(`g${i}_${gi}`, built.path, len * f, boreAt(f))
     );
@@ -793,7 +840,7 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
     gates.forEach((gate, gi) => {
       spawns.push(
         fillTube(rng, built.path, gate, len * fractions[gi], gates[gi + 1] || null,
-          groupSize(rng, level), t, boreAt)
+          groupSize(rng, level, perPipe[i]), t, boreAt)
       );
     });
     // Two pipes can feed the same pit, so append rather than replace.

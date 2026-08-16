@@ -246,6 +246,16 @@ export const PROFILES = {
     const waist = Math.abs(Math.cos(clamp01(f) * Math.PI));
     return narrow + (wide - narrow) * ease(waist);
   },
+
+  /** A flask that holds its bulb far longer, then drops to a short spout. */
+  retort: (wide, narrow) => PROFILES.flask(wide, narrow, 0.66),
+
+  /** Narrow mouth, shoulders high up, then a long even taper to the spout. */
+  urn: (wide, narrow) => (f) => {
+    const u = clamp01(f);
+    if (u < 0.18) return narrow + (wide - narrow) * ease(u / 0.18);
+    return wide + (narrow - wide) * ease((u - 0.18) / 0.82);
+  },
 };
 
 /**

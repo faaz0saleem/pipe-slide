@@ -29,7 +29,19 @@ await page.waitForTimeout(3000);
 
 const shot = async (name, setup, settleSteps=0) => {
   await page.evaluate(setup, name.startsWith('level-') ? Number(name.split('-')[1]) : 0);
-  await page.waitForTimeout(6000);
+  // Wait for frames to have actually been drawn, not for a fixed delay. The
+  // old timeout sometimes captured a bare HUD over an empty stage, which looks
+  // exactly like a rendering bug and cost two rounds of chasing one.
+  //
+  // This does not rescue a bonus round: a hundred and fifty coins is more than
+  // headless software GL will paint however long you wait, and the very same
+  // scene renders in full the moment the sprite count drops. Shoot those in a
+  // real browser, not here.
+  const drawn = await page.evaluate(() => window.game.loop.frame);
+  await page.waitForFunction((f0) => window.game.loop.frame > f0 + 4, drawn, {
+    timeout: 90000,
+    polling: 250,
+  });
   await page.waitForTimeout(1500);
   if (settleSteps) {
     await page.evaluate((n)=>{ const gs=window.game.scene.getScene('Game');
@@ -42,7 +54,9 @@ const shot = async (name, setup, settleSteps=0) => {
 };
 
 
-for (const id of [4, 12, 22, 40, 55, 78]) {
+// Two, three and four pipes across the difficulty range. No bonus rounds:
+// see the note in shot() — they cannot be captured here.
+for (const id of [4, 12, 22, 44, 55, 78, 99]) {
   await shot(`level-${id}`, (lv)=>{ const g=window.game;
     g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Game',{levelId:lv}); }, 90);
 }

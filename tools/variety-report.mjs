@@ -92,6 +92,43 @@ console.log(`avg neighbour similarity   shape ${(avgSil * 100).toFixed(1)}%  pin
 console.log(`pairs >80% alike           ${pairs.length}${pairs.length ? '  worst: ' + pairs.slice(0, 6).map((p) => `${p.a}~${p.b} ${(p.s * 100) | 0}%`).join(', ') : ''}`);
 console.log(`pin count                  ${nonBonus[0].pins.length} -> ${nonBonus.at(-1).pins.length}, ${regressions} backward steps`);
 
+/* --- board size variety ------------------------------------------------
+ * "Every level is the same" is often really "every level is the same size".
+ * A run of thirty levels that all hold fourteen pins reads as one level no
+ * matter how differently its glass is bent, so count the sizes and the
+ * longest stretch that never changes. */
+const sizes = nonBonus.map((l) => l.pins.length);
+let run = 1;
+let longest = 1;
+let longestAt = nonBonus[0].id;
+for (let i = 1; i < sizes.length; i++) {
+  if (sizes[i] === sizes[i - 1]) {
+    run++;
+    if (run > longest) {
+      longest = run;
+      longestAt = nonBonus[i].id;
+    }
+  } else run = 1;
+}
+console.log(`distinct pin counts        ${new Set(sizes).size}/${sizes.length} levels`);
+console.log(`longest same-size run      ${longest} (through L${longestAt})`);
+
+/* --- gates per pipe: do the channels on one board differ? -------------- */
+let evenBoards = 0;
+let pipeBoards = 0;
+for (const l of nonBonus) {
+  const per = {};
+  for (const p of l.pins) {
+    const m = /^g(\d+)_/.exec(p.id);
+    if (m) per[m[1]] = (per[m[1]] || 0) + 1;
+  }
+  const counts = Object.values(per);
+  if (counts.length < 2) continue;
+  pipeBoards++;
+  if (new Set(counts).size === 1) evenBoards++;
+}
+console.log(`boards with every pipe alike ${evenBoards}/${pipeBoards}`);
+
 const byFamily = {};
 for (const l of doc.levels) byFamily[l.family] = (byFamily[l.family] || 0) + 1;
 console.log('families                  ', byFamily);
