@@ -729,6 +729,58 @@ function difficultyFor(level, rng) {
 }
 
 /**
+ * Which delivery stage each group in a tube belongs to, from the outlet up.
+ *
+ * This is what stops every level being the same job. A pipe used to carry one
+ * payload type, so the pipe *was* the stage, and the answer to all ninety
+ * boards was the same routine: drain a pipe, flip a blade, drain the next
+ * pipe, flip. Nothing about the glass changed that.
+ *
+ * Mixing types inside a tube breaks the equivalence. The ordering is forced,
+ * not searched: a tube empties bottom-first and the blades only flip one way,
+ * so the stages a tube serves must run in order from its outlet upward —
+ * whatever sits lowest has to be whatever the machine is ready to catch first.
+ * Within that rule a tube may serve any run of stages, so one holds coal over
+ * apples while its neighbour holds apples alone, and the player has to read
+ * the stack in every tube to work out the schedule.
+ *
+ * @returns {number[]} stage index per group, lowest group first
+ */
+function stackStages(rng, gates, stages) {
+  const most = Math.min(gates, stages);
+  // Biased towards serving more stages, because a tube that serves exactly one
+  // is a tube the player can empty and forget — the old behaviour.
+  const span = most - (Math.floor(rng() * rng() * most) % most);
+  const start = Math.floor(rng() * (stages - span + 1)) % (stages - span + 1);
+  const per = new Array(span).fill(1);
+  for (let left = gates - span; left > 0; left--) per[Math.floor(rng() * span) % span]++;
+  return per.flatMap((n, i) => new Array(n).fill(start + i));
+}
+
+/**
+ * Stage assignments for every tube, with every pit guaranteed a delivery and
+ * at least one tube spanning a blade flip.
+ *
+ * A pit nobody fills can never meet its quota, so that level would be dead on
+ * arrival — cheaper to redraw here than to build the whole board and have the
+ * solver reject it. The second rule is what keeps the player reading: if every
+ * tube serves exactly one stage then the tube is the stage again, and the
+ * answer collapses back to "drain a pipe, flip, drain the next". Boards too
+ * small to afford it — one gate per pipe — are exempt, and should be: they are
+ * the opening levels, where that routine is the thing being taught.
+ */
+function stackPlan(rng, perPipe, stages) {
+  const canSpan = stages > 1 && perPipe.some((g) => g > 1);
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const plan = perPipe.map((gates) => stackStages(rng, gates, stages));
+    if (new Set(plan.flat()).size !== stages) continue;
+    if (canSpan && !plan.some((p) => p[0] !== p[p.length - 1])) continue;
+    return plan;
+  }
+  return null;
+}
+
+/**
  * Hand a gate budget out across the pipes, unevenly.
  *
  * Every pipe used to carry the same count, which is why four channels read as
@@ -781,16 +833,6 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   const pitCount = inletCount === 2 ? 2 : 3;
   const pitTypes = distinctTypes(rng, level, pitCount, bulbHalf * 2);
 
-  // Which type each pipe carries. When a type is doubled up, its two pipes sit
-  // side by side so they drain at the same rate — split them across the board
-  // and the far one lags behind the blade flip and misroutes.
-  const carried = [];
-  const doubled = inletCount > pitCount ? Math.floor(rng() * pitCount) % pitCount : -1;
-  pitTypes.forEach((t, i) => {
-    carried.push(t);
-    if (i === doubled) carried.push(t);
-  });
-
   // How far the whole drain assembly slides off centre. Clamped so the outer
   // pit never leaves the board.
   const shift = [-96, -48, 0, 0, 48, 96][Math.floor(rng() * 6) % 6];
@@ -835,12 +877,15 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   const shapes = Array.from({ length: inletCount }, pipeProfile);
   const controls = inletControls(inletCount, exitY, rng, shapes.map((s) => s.fn));
   const perPipe = shareGates(rng, inletCount, gateCount);
+  // Which stage each group serves. `bottom.order` is the sequence the machine
+  // presents its pits in, so a stage index is a position in that sequence.
+  const plan = stackPlan(rng, perPipe, bottom.order.length);
+  if (!plan) return null;
 
   // Each inlet: a curved tube, its gates, and a payload group behind each gate.
-  const gatesByType = {};
+  const gatesByStage = bottom.order.map(() => []);
   const bores = [];
   for (let i = 0; i < inletCount; i++) {
-    const t = carried[i];
     const shape = shapes[i];
     const built = vesselProfiled(controls[i], shape.fn, shape.narrow, WALL_T, 9);
     if (!boreIsOpen(built, spoutHalf * 2)) return null;
@@ -858,13 +903,15 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
     pins.push(...gates);
 
     gates.forEach((gate, gi) => {
+      const stage = plan[i][gi];
       spawns.push(
         fillTube(rng, built.path, gate, len * fractions[gi], gates[gi + 1] || null,
-          groupSize(rng, level, perPipe[i]), t, boreAt)
+          groupSize(rng, level, perPipe[i]), bottom.order[stage], boreAt)
       );
+      // Appending in gate order keeps each tube's own groups bottom-up, which
+      // is the only order they can physically leave in.
+      gatesByStage[stage].push(gate.id);
     });
-    // Two pipes can feed the same pit, so append rather than replace.
-    gatesByType[t] = (gatesByType[t] || []).concat(gates.map((g) => g.id));
   }
 
   // Bundled swings keep their spacing in theory; confirm it in the geometry,
@@ -873,10 +920,12 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   // a four-pipe board: this is a crossing detector, not a spacing preference.
   if (!channelsAreClear(bores, 17)) return null;
 
-  // Release one inlet per blade stage, pulling its gates bottom-up.
+  // Empty everything the current pit wants — wherever it happens to sit —
+  // then flip the blade. That is no longer "one pipe per stage": a stage may
+  // take the bottom group from three different tubes and leave a fourth alone.
   const solution = [];
-  bottom.order.forEach((t, stage) => {
-    solution.push(...gatesByType[t]);
+  gatesByStage.forEach((ids, stage) => {
+    solution.push(...ids);
     if (bottom.blades[stage]) solution.push(bottom.blades[stage]);
   });
 
@@ -1097,7 +1146,7 @@ function buildLevel(level, prevShape) {
   let fallback = null;
   let lookalike = null;
 
-  for (let attempt = 0; attempt < 26; attempt++) {
+  for (let attempt = 0; attempt < 44; attempt++) {
     const candidate = attemptLevel(level, attempt);
 
     // Cheap rejections first: no point simulating a broken board.
@@ -1111,7 +1160,13 @@ function buildLevel(level, prevShape) {
 
     if (report.clean && !tooSimilar) return { level: candidate, attempt, quality: 'clean', shape };
     if (report.clean && !lookalike) lookalike = { level: candidate, attempt, quality: 'lookalike', shape };
-    if (!fallback) fallback = { level: candidate, attempt, quality: 'messy', shape };
+    // When nothing comes out clean, keep the *least* wasteful board rather than
+    // the first one that merely worked. The player is shown this order as the
+    // paid hint, so every item it throws away is the hint lying to them.
+    const waste = report.wrong + report.lost;
+    if (!fallback || waste < fallback.waste) {
+      fallback = { level: candidate, attempt, quality: 'messy', shape, waste };
+    }
   }
 
   if (lookalike) return lookalike;
@@ -1120,7 +1175,7 @@ function buildLevel(level, prevShape) {
   // Nothing played. Hand back the first candidate that at least built, so the
   // build fails loudly downstream rather than silently shipping a level nobody
   // can finish.
-  for (let attempt = 0; attempt < 26; attempt++) {
+  for (let attempt = 0; attempt < 44; attempt++) {
     const last = attemptLevel(level, attempt);
     if (last) return { level: last, attempt, quality: 'unsolved', shape: silhouette(last) };
   }

@@ -141,6 +141,24 @@ for (const l of nonBonus) {
 }
 console.log('channels per board        ', pipeMix);
 
+/* --- the thing the player actually does --------------------------------
+ * Geometry variety counts for nothing if the job is identical every time.
+ * When each pipe carried a single payload type the pipe *was* the delivery
+ * stage, so the answer to all ninety boards was one routine — drain a pipe,
+ * flip a blade, drain the next. That is measurable: does any pipe get
+ * revisited after the solution has moved on from it? */
+let oneRunPerPipe = 0;
+const shapes = new Set();
+for (const l of nonBonus) {
+  const steps = l.solution.map((id) => /^g(\d+)_/.exec(id)?.[1] ?? 'B');
+  const runs = steps.filter((s, i) => s !== steps[i - 1]);
+  const pipesOnly = runs.filter((s) => s !== 'B');
+  if (pipesOnly.length === new Set(pipesOnly).size) oneRunPerPipe++;
+  shapes.add(runs.join('-'));
+}
+console.log(`solutions "drain a pipe, flip" ${oneRunPerPipe}/${nonBonus.length}`);
+console.log(`distinct solution shapes   ${shapes.size}/${nonBonus.length}`);
+
 /* --- gates per pipe: do the channels on one board differ? -------------- */
 let evenBoards = 0;
 let pipeBoards = 0;

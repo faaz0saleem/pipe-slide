@@ -274,8 +274,18 @@ export function simulateLevel(lv, { verbose = false } = {}) {
   // A wrong pit or a dropped item is now a cost, not an instant loss: every
   // group spawns spare items. A level is solved when each pit meets its quota.
   report.solved = receivers.every((r) => r.delivered >= r.def.required);
-  // A level whose own hint order wastes anything is a level whose hint lies.
-  report.clean = report.solved && wrong === 0 && lost === 0;
+  /*
+   * Clean means everything that spawned ended up where it belongs.
+   *
+   * Wedged payload used to be excluded from this, and it should never have
+   * been: an apple arched across the bowl neck sits in the glass for the rest
+   * of the level, in plain sight, and it has silently eaten the spare that was
+   * supposed to absorb a player's mistake. Nineteen of ninety boards shipped
+   * that way, and the ones scraping quota exactly would flip to a loss on any
+   * small divergence — which is exactly how the browser smoke test caught a
+   * level the solver was calling clean.
+   */
+  report.clean = report.solved && wrong === 0 && lost === 0 && stillMoving === 0;
   if (verbose) console.log(JSON.stringify(report, null, 2));
   return report;
 }

@@ -68,13 +68,18 @@ const solved = await page.evaluate(async () => {
   const pump = (steps) => {
     for (let i = 0; i < steps; i++) gs.matter.world.step(1000 / 60);
   };
+  // Settled means settled for a while. Bailing on the first still frame let
+  // the next pin be pulled at the apex of a bounce, so the test played a
+  // different game from the solver and disagreed with it.
   const quiet = async (maxSteps) => {
+    let still = 0;
     for (let done = 0; done < maxSteps; done += 30) {
       pump(30);
       await sleep(0);
       if (gs.finished) return;
       const moving = gs.payloads.some((p) => !p.resolved && p.sprite && p.speed > 0.4);
-      if (!moving) return;
+      still = moving ? 0 : still + 30;
+      if (still >= 120) return;
     }
   };
   // Diagnostics: are collision events reaching the scene at all?
