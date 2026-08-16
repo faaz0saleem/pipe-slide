@@ -28,17 +28,38 @@ await page.goto('http://127.0.0.1:4199/');
 await page.waitForTimeout(3000);
 
 const shot = async (name, setup, settleSteps=0) => {
+  /*
+   * Reload before every capture.
+   *
+   * Restarting scenes in the same page eventually stops painting: after a few
+   * cycles the Game scene builds correctly — right number of children, camera
+   * untouched — and renders nothing at all, while the HUD scene beside it
+   * still draws. A level that comes out blank in a batch renders in full when
+   * it is the first scene of a session, so this is the headless software-GL
+   * context giving up on repeated teardowns, not the level. Reloading costs a
+   * few seconds each and makes the captures deterministic.
+   *
+   * It does not rescue a bonus round: a hundred and fifty coins is more than
+   * this renderer will paint however long you wait, which thinning the same
+   * scene to twenty sprites confirms. Shoot those in a real browser.
+   */
+  await page.goto('http://127.0.0.1:4199/');
+  await page.waitForFunction(() => !!window.game?.scene?.getScene('Menu'), null, { timeout: 60000 });
+  await page.waitForTimeout(2500);
+
   await page.evaluate(setup, name.startsWith('level-') ? Number(name.split('-')[1]) : 0);
-  // Wait for frames to have actually been drawn, not for a fixed delay. The
-  // old timeout sometimes captured a bare HUD over an empty stage, which looks
-  // exactly like a rendering bug and cost two rounds of chasing one.
-  //
-  // This does not rescue a bonus round: a hundred and fifty coins is more than
-  // headless software GL will paint however long you wait, and the very same
-  // scene renders in full the moment the sprite count drops. Shoot those in a
-  // real browser, not here.
+  // Wait for the scene to be built and *then* for frames to be drawn. A fixed
+  // delay captured half-built stages; counting frames alone is not enough
+  // either, because game.loop.frame is global and keeps ticking while the new
+  // scene is still booting, so it can clear before anything has been painted.
+  if (name.startsWith('level-')) {
+    await page.waitForFunction(() => {
+      const gs = window.game?.scene?.getScene('Game');
+      return !!(gs && gs.pipes && gs.pins?.length);
+    }, null, { timeout: 60000, polling: 250 });
+  }
   const drawn = await page.evaluate(() => window.game.loop.frame);
-  await page.waitForFunction((f0) => window.game.loop.frame > f0 + 4, drawn, {
+  await page.waitForFunction((f0) => window.game.loop.frame > f0 + 6, drawn, {
     timeout: 90000,
     polling: 250,
   });

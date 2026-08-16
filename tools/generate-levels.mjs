@@ -414,11 +414,18 @@ const smoothstep = (u) => u * u * (3 - 2 * u);
 
 function inletControls(count, exitY, rng, halves) {
   // Where each pipe starts across the top and where it has to arrive.
+  // Four reservoirs already sit twenty pixels apart, so they get almost no
+  // room to shuffle; two have the whole board.
+  const spread = count === 4 ? 8 : 26;
   const tops = {
     2: [150, 570],
     3: [112, 360, 608],
     4: [92, 266, 454, 628],
-  }[count];
+  }[count].map((x, i) => {
+    // Nudge the mouths apart unevenly so the reservoirs are not a regular comb.
+    const h = halves[i](0);
+    return Math.max(h + 8, Math.min(W - h - 8, x + Math.round((rng() - 0.5) * spread * 2)));
+  });
   const exits = {
     2: [235, 485],
     3: [178, 360, 542],
@@ -428,6 +435,17 @@ function inletControls(count, exitY, rng, halves) {
   // Mouth heights stagger a long way now: a reservoir that starts 100px below
   // its neighbour frees the lateral room its neighbour is using.
   const mouthY = tops.map(() => TUBE_TOP + Math.round(rng() * 96));
+
+  /*
+   * And the outlets stagger too, which is what stops a board being a comb.
+   *
+   * Every channel used to run the full drop and stop at the same height, so
+   * whatever the glass did in between, the silhouette was always N tubes of
+   * one length in a row. A lifted outlet ends the vessel early and drops its
+   * payload the rest of the way into the bowl mouth — short stubby flasks
+   * beside long snaking ones, and a cascade where there used to be a row.
+   */
+  const exitYs = tops.map(() => exitY - Math.round(rng() * rng() * 190));
 
   /*
    * Wave shape.
@@ -462,11 +480,13 @@ function inletControls(count, exitY, rng, halves) {
   // Straight-line lane of pipe i at depth t, before any wave is applied. Eased
   // so a pipe leaves its mouth vertically and arrives at the bowl vertically.
   const lane = (i, t) => tops[i] + (exits[i] - tops[i]) * smoothstep(t);
-  const yAt = (i, t) => mouthY[i] + (exitY - mouthY[i]) * t;
+  const yAt = (i, t) => mouthY[i] + (exitYs[i] - mouthY[i]) * t;
   // Neighbours are compared at a shared *depth*, not a shared path fraction:
-  // with the mouths staggered by up to 96px the two are no longer the same
-  // thing, and a pipe's fat reservoir can sit beside its neighbour's spout.
-  const tAtY = (i, y) => Math.max(0, Math.min(1, (y - mouthY[i]) / (exitY - mouthY[i])));
+  // with the mouths and the outlets both staggered the two are no longer the
+  // same thing, and a pipe's fat reservoir can sit beside its neighbour's
+  // spout — or beside nothing at all, where the neighbour has already ended.
+  const tAtY = (i, y) =>
+    Math.max(0, Math.min(1, (y - mouthY[i]) / ((exitYs[i] - mouthY[i]) || 1)));
   const half = (i, t) => halves[i](t);
 
   // Sample the wave finely enough that the spline follows it. At eight steps
@@ -536,7 +556,7 @@ function inletControls(count, exitY, rng, halves) {
     }
   }
 
-  for (let i = 0; i < count; i++) pts[i].push([exits[i], exitY]);
+  for (let i = 0; i < count; i++) pts[i].push([exits[i], exitYs[i]]);
   return pts;
 }
 
@@ -673,39 +693,39 @@ function groupSize(rng, level, gates) {
 }
 
 /**
- * The difficulty ladder.
- *
- * Pipes set the stage, but the thing that actually climbs is a *budget* of
- * gates for the whole board, spent across the pipes by shareGates(). Handing
- * every pipe the same fixed number of gates gave only seven distinct board
- * sizes across ninety levels, and left the last thirty-four of them at exactly
- * fourteen pins — which is the "every level is the same" the player sees.
- *
- * The budget rises a step at a time within each band, plus a one-gate wobble
- * so consecutive levels rarely match. The wobble can cost a single pin against
- * the level before, never more, so the run never feels like it went backwards.
+ * How many pins the board should hold. This is the difficulty ladder, and it
+ * is the only thing tied to the level number: three at the start, eighteen by
+ * the end, climbing a step at a time with a one-pin wobble so consecutive
+ * levels rarely match. The wobble can cost a single pin against the level
+ * before, never more, so the run never feels like it went backwards.
  */
-function difficultyFor(level) {
-  const BANDS = [
-    { until: 21, pipes: 2, from: 2, to: 6 },
-    { until: 48, pipes: 3, from: 5, to: 10 },
-    { until: 100, pipes: 4, from: 9, to: 16 },
-  ];
-  let start = 1;
-  for (const b of BANDS) {
-    if (level > b.until) {
-      start = b.until + 1;
-      continue;
-    }
-    const span = Math.max(1, b.until - start);
-    const climb = b.from + Math.round(((level - start) / span) * (b.to - b.from));
-    // The wobble may not push a band past its own ceiling: a band ending one
-    // gate high and the next starting at its floor is the one place the run
-    // could drop by two, which reads as the game getting easier.
-    const wobble = (level * 7) % 3 === 0 ? 1 : 0;
-    return { pipes: b.pipes, gates: Math.min(b.to, b.pipes * 4, climb + wobble) };
+function targetPins(level) {
+  return Math.min(18, 3 + Math.round(((level - 1) / 98) * 14) + ((level * 7) % 3 === 0 ? 1 : 0));
+}
+
+/**
+ * Pick a board that holds that many pins.
+ *
+ * Pipe count used to be pinned to the level too, which is why forty-six
+ * levels in a row were four-pipe boards — the single biggest reason one level
+ * looks like the last. Difficulty rides on the pin count instead, so the same
+ * target can be met by three fat channels or four thin ones and the layout is
+ * free to change underneath it. `pins = gates + blades`, so the arithmetic
+ * settles which counts are even possible.
+ *
+ * Three pits need three payload types, and the catalogue only opens up at
+ * level 13 — before that a third pit would be handed an undefined type.
+ */
+function difficultyFor(level, rng) {
+  const pins = targetPins(level);
+  const options = [];
+  for (const pipes of [2, 3, 4]) {
+    if (pipes > 2 && level < 13) continue;
+    const gates = pins - (pipes === 2 ? 1 : 2);
+    if (gates >= pipes && gates <= pipes * 4) options.push({ pipes, gates });
   }
-  return { pipes: 4, gates: 16 };
+  if (!options.length) return { pipes: 4, gates: Math.max(4, Math.min(16, pins - 2)) };
+  return options[Math.floor(rng() * options.length) % options.length];
 }
 
 /**
@@ -961,7 +981,9 @@ function attemptLevel(level, attempt) {
   if (level % 10 === 0) {
     core = buildVault(rng, level);
   } else {
-    const { pipes, gates } = difficultyFor(level);
+    // Drawn from the level's rng, so a re-roll can try a different shape of
+    // board rather than the same one with the numbers nudged.
+    const { pipes, gates } = difficultyFor(level, rng);
     core = buildPipeLevel(rng, level, pipes, gates);
     if (!core) return null; // geometry rejected itself; the caller re-rolls
   }

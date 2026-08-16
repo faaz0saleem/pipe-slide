@@ -113,6 +113,34 @@ for (let i = 1; i < sizes.length; i++) {
 console.log(`distinct pin counts        ${new Set(sizes).size}/${sizes.length} levels`);
 console.log(`longest same-size run      ${longest} (through L${longestAt})`);
 
+/* --- composition: what the player actually reads as "a different level" --
+ * The silhouette fingerprint above counts squiggles, and squiggles are cheap
+ * to vary while every board stays N tubes of one length in a row emptying
+ * into one bowl. This coarser signature — how many channels, how long they
+ * are, where they end — is the thing that makes two levels look alike. */
+const composition = new Map();
+for (const l of nonBonus) {
+  const inlets = l.tubes.filter((t) => t.cap);
+  const bucket = (v, n) => Math.round(v / n) * n;
+  const lens = inlets.map((t) => {
+    const ys = t.left.map((p) => p[1]);
+    return bucket(Math.max(...ys) - Math.min(...ys), 60);
+  });
+  const ends = inlets.map((t) => bucket(t.left.at(-1)[1], 60));
+  const key = `${inlets.length}|${lens.slice().sort().join()}|${ends.slice().sort().join()}`;
+  composition.set(key, (composition.get(key) || 0) + 1);
+}
+const worstComp = [...composition.entries()].sort((a, b) => b[1] - a[1])[0];
+console.log(`distinct compositions      ${composition.size}/${nonBonus.length} levels`);
+console.log(`commonest composition      ${worstComp[1]} levels share "${worstComp[0]}"`);
+
+const pipeMix = {};
+for (const l of nonBonus) {
+  const n = l.tubes.filter((t) => t.cap).length;
+  pipeMix[n] = (pipeMix[n] || 0) + 1;
+}
+console.log('channels per board        ', pipeMix);
+
 /* --- gates per pipe: do the channels on one board differ? -------------- */
 let evenBoards = 0;
 let pipeBoards = 0;
