@@ -301,54 +301,100 @@ function shiftBottom(dx, walls, pins, receivers, fromWall, fromPin, fromRecv) {
 }
 
 /**
- * One blade, two pits. With the blade in place the flow slides left; pull it
- * and the flow drops straight into the centre pit.
+ * The routing machine: a collector neck, a stack of diverter blades, and the
+ * pits they feed.
+ *
+ * Each blade is a ramp hanging off one edge of the neck and throwing the flow
+ * across to a pit on the far side. Pulling it drops the flow onto the next
+ * blade down, so the pits are served in blade order and the last one is always
+ * the straight drop through the middle.
+ *
+ * Every dimension here used to be a literal, in two hand-tuned variants. That
+ * made the part of the board the player actually operates identical on all
+ * ninety levels, whatever the glass above it was doing — the deepest of the
+ * "every level is the same" complaints, and the last one left. It is now laid
+ * out from the ground upward from jittered parameters, so the neck bore, how
+ * deep it hangs, which way the first blade throws, how steep each ramp is, how
+ * far apart they stack, and how wide and deep each pit sits all change level
+ * to level. The rules the old literals were encoding are kept as constraints
+ * rather than as constants, and the solver rejects any board that does not
+ * play, so this can vary without going quietly wrong.
  */
-function bottomOneBlade(types, channel, pins, receivers) {
-  const [leftType, centreType] = types;
+function bottomCascade(rng, types, channel, pins, receivers) {
+  const blades = types.length - 1;
+  const jit = (base, range) => base + Math.round((rng() - 0.5) * range);
+  const cx = W / 2;
 
-  // The left neck wall stops early so payloads leaving on the blade can duck
-  // under it; the right one runs lower to swallow the blade's high end.
-  channel(vwall(NECK_L, 830, 890), vwall(NECK_R, 830, 910));
+  // Hoppers arch below roughly four payload diameters, and NECK_L..NECK_R is
+  // the width proven to clear the fattest payload. Jitter upward from it only.
+  const neckHalf = (NECK_R - NECK_L) / 2 + Math.round(rng() * 16);
+  const neckL = cx - neckHalf;
+  const neckR = cx + neckHalf;
 
-  pins.push(rampPin('blade1', 452, 916, 190, 1030));
+  // Which way the first blade throws, alternating down the stack. A machine
+  // that sends the flow right, then left, then straight down is a different
+  // machine to operate from one that goes left, then right.
+  let dir = rng() < 0.5 ? -1 : 1;
 
-  // The pits share a wall exactly. Any ledge between them is a perch, and a
-  // payload parked on a perch gets knocked into the wrong pit by the next
-  // group — which is how stage stragglers used to become wrong deliveries.
-  receivers.push(receiver(leftType, 118, 1042, 196, { charSide: -1 }));
-  receivers.push(receiver(centreType, 357, 1046, 250, { charSide: 1 }));
+  // Laid out from the ground up: the straight-drop pit sets the bottom, the
+  // blades stack above it, and the neck hangs above the topmost blade.
+  const dropTop = jit(1040, 18);
+  const step = jit(95, 18);
+  const rise = jit(124, 26);
+  const topBladeY = dropTop - rise + 10 - (blades - 1) * step;
 
-  return { bowlTop: 700, neckTop: 830, order: [leftType, centreType], blades: ['blade1'] };
-}
+  const ramps = [];
+  for (let k = 0; k < blades; k++) {
+    const y0 = topBladeY + k * step;
+    // The high end tucks just past the neck edge on the far side from the
+    // throw, so flow lands on the ramp rather than beside it.
+    const x0 = dir > 0 ? neckL - jit(4, 8) : neckR + jit(4, 8);
+    const x1 = dir > 0 ? jit(566, 30) : jit(154, 30);
+    ramps.push({ id: `blade${k + 1}`, x0, y0, x1, y1: y0 + rise, dir });
+    dir = -dir;
+  }
 
-/** Two stacked blades, three pits: right, then left, then centre. */
-function bottomTwoBlades(types, channel, pins, receivers) {
-  const [rightType, leftType, centreType] = types;
+  // Neck walls stop above the topmost blade's high end. The wall on the side
+  // the flow leaves towards is the shorter of the two, so a payload riding the
+  // ramp ducks under it instead of catching on it.
+  const neckTop = ramps[0].y0 - jit(64, 16);
+  const shortSide = ramps[0].dir;
+  channel(
+    vwall(neckL, neckTop, ramps[0].y0 - (shortSide < 0 ? jit(30, 10) : jit(8, 6))),
+    vwall(neckR, neckTop, ramps[0].y0 - (shortSide > 0 ? jit(30, 10) : jit(8, 6)))
+  );
 
-  channel(vwall(NECK_L, 740, 784), vwall(NECK_R, 740, 790));
+  for (const r of ramps) pins.push(rampPin(r.id, r.x0, r.y0, r.x1, r.y1));
 
-  pins.push(rampPin('blade1', 265, 810, 560, 940));
-  pins.push(rampPin('blade2', 452, 905, 150, 1010));
-
-  // Centre pit spans wall-to-wall between its neighbours: no perch ledges.
-  receivers.push(receiver(leftType, 112, 1030, 184, { charSide: -1 }));
-  receivers.push(receiver(centreType, 354.5, 1035, 269, { charSide: 1 }));
-  receivers.push(receiver(rightType, 600, 980, 190, { charSide: 1 }));
+  // A pit sits under the end of its ramp, pulled a little further out so the
+  // payload rolls in rather than stalling on the near lip.
+  ramps.forEach((r, k) => {
+    const w = jit(198, 44);
+    const x =
+      r.dir > 0
+        ? Math.min(W - 14 - w / 2, r.x1 + jit(32, 22))
+        : Math.max(14 + w / 2, r.x1 - jit(32, 22));
+    receivers.push(receiver(types[k], x, jit(1016, 48), w, { charSide: x < cx ? -1 : 1 }));
+  });
+  receivers.push(
+    receiver(types[blades], cx, jit(1042, 14), jit(254, 42), { charSide: rng() < 0.5 ? -1 : 1 })
+  );
 
   return {
-    bowlTop: 610,
-    neckTop: 740,
-    order: [rightType, leftType, centreType],
-    blades: ['blade1', 'blade2'],
+    bowlTop: neckTop - jit(132, 28),
+    neckTop,
+    neckL,
+    neckR,
+    order: types.slice(),
+    blades: ramps.map((r) => r.id),
   };
 }
 
 /** The curved collector every tube empties into. */
-function bowl(topY, neckTop, outer, shift = 0) {
+function bowl(topY, neckTop, outer, shift, neckL, neckR) {
   const drop = neckTop - topY;
-  const left = NECK_L + shift;
-  const right = NECK_R + shift;
+  const left = neckL + shift;
+  const right = neckR + shift;
   // Asymmetric on a shifted drain, which is exactly the point: the flow leans.
   return [
     curveWall([
@@ -837,10 +883,7 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   // pit never leaves the board.
   const shift = [-96, -48, 0, 0, 48, 96][Math.floor(rng() * 6) % 6];
 
-  const bottom =
-    pitCount === 2
-      ? bottomOneBlade(pitTypes, channel, pins, receivers)
-      : bottomTwoBlades(pitTypes, channel, pins, receivers);
+  const bottom = bottomCascade(rng, pitTypes, channel, pins, receivers);
 
   // Clamp so the outermost pit never leaves the board.
   const minX = Math.min(...receivers.map((r) => r.x - r.w / 2));
@@ -848,11 +891,15 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   const clamped = Math.max(-(minX - 6), Math.min(W - 6 - maxX, shift));
   shiftBottom(clamped, walls, pins, receivers, 0, 0, 0);
 
+  // The bowl has to follow the *clamped* shift. Handing it the raw one left the
+  // funnel's throat offset from the neck walls it feeds whenever the clamp bit.
   const [bowlL, bowlR] = bowl(
     bottom.bowlTop,
     bottom.neckTop,
     wobble({ 2: 150, 3: 100, 4: 82 }[inletCount], 34),
-    shift
+    clamped,
+    bottom.neckL,
+    bottom.neckR
   );
   channel(bowlL, bowlR);
 

@@ -159,6 +159,21 @@ for (const l of nonBonus) {
 console.log(`solutions "drain a pipe, flip" ${oneRunPerPipe}/${nonBonus.length}`);
 console.log(`distinct solution shapes   ${shapes.size}/${nonBonus.length}`);
 
+/* --- the machine at the bottom ----------------------------------------
+ * The blades and pits are what the player actually operates, so two boards
+ * with the same one play the same however differently the glass above them is
+ * bent. Both variants used to be hand-written literals, which made this the
+ * most-shared thing in the game. */
+const machines = new Set();
+for (const l of nonBonus) {
+  const blades = l.pins
+    .filter((p) => p.kind === 'ramp')
+    .map((p) => `${Math.round(p.x / 20)},${Math.round(p.y / 20)},${Math.round(p.angle / 5)}`);
+  const pits = l.receivers.map((r) => `${Math.round(r.x / 20)}w${Math.round(r.w / 20)}t${Math.round(r.top / 20)}`);
+  machines.add(`${blades.join('|')}/${pits.join('|')}`);
+}
+console.log(`distinct bottom machines   ${machines.size}/${nonBonus.length} levels`);
+
 /* --- gates per pipe: do the channels on one board differ? -------------- */
 let evenBoards = 0;
 let pipeBoards = 0;
