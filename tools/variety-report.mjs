@@ -159,6 +159,34 @@ for (const l of nonBonus) {
 console.log(`solutions "drain a pipe, flip" ${oneRunPerPipe}/${nonBonus.length}`);
 console.log(`distinct solution shapes   ${shapes.size}/${nonBonus.length}`);
 
+/* --- boards that play the same ----------------------------------------
+ * Structure only: how many channels, how many pins, the pull order, and which
+ * way each blade throws. Two levels matching on all of that play identically
+ * however differently their glass is bent — which is how 2 and 4 shipped as
+ * the same level while every geometric measure passed. Which pit holds which
+ * item is left out on purpose: swapping the cast is not a new level. */
+const play = new Map();
+for (const l of nonBonus) {
+  const steps = l.solution.map((id) => /^g(\d+)_/.exec(id)?.[1] ?? 'B');
+  const sig = [
+    l.tubes.filter((t) => t.cap).length,
+    l.pins.length,
+    steps.filter((s, i) => s !== steps[i - 1]).join('-'),
+    l.pins.filter((p) => p.kind === 'ramp').map((p) => (Math.abs(p.angle) < 90 ? 'R' : 'L')).join(''),
+  ].join('|');
+  if (!play.has(sig)) play.set(sig, []);
+  play.get(sig).push(l.id);
+}
+const twins = [...play.values()].filter((v) => v.length > 1);
+// Only a repeat close enough to still be in the player's memory matters.
+const nearTwins = twins.flatMap((ids) =>
+  ids.flatMap((a, i) => ids.slice(i + 1).filter((b) => b - a <= 6).map((b) => `${a}~${b}`))
+);
+console.log(`distinct play signatures   ${play.size}/${nonBonus.length} levels`);
+console.log(
+  `repeats within 6 levels    ${nearTwins.length}${nearTwins.length ? '  ' + nearTwins.slice(0, 10).join(' ') : ''}`
+);
+
 /* --- the machine at the bottom ----------------------------------------
  * The blades and pits are what the player actually operates, so two boards
  * with the same one play the same however differently the glass above them is

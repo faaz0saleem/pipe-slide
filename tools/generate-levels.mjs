@@ -79,11 +79,20 @@ const PAYLOADS = {
   bomb: { radius: 20, receiver: 'lava', character: null },
 };
 
-/** Distinct payload types for one level. Bombs need a roomy bore. */
+/**
+ * Distinct payload types for one level. Bombs need a roomy bore.
+ *
+ * The catalogue opens early on purpose. With only coal and apples there are
+ * two pits, two ways for a blade to throw and therefore just four possible
+ * machines, so the opening levels *had* to repeat each other — which is what
+ * made 2 and 4 the same board, and 3 and 5 with them. A third item by level 6
+ * triples that space, and it is not too much to ask of a player who has
+ * already sorted two.
+ */
 function distinctTypes(rng, level, n, bore) {
   const pool = ['coal', 'apple'];
-  if (level >= 13) pool.push('gem');
-  if (level >= 24) pool.push('coin');
+  if (level >= 6) pool.push('gem');
+  if (level >= 16) pool.push('coin');
 
   const out = [];
   while (out.length < n && pool.length) {
@@ -759,14 +768,14 @@ function targetPins(level) {
  * free to change underneath it. `pins = gates + blades`, so the arithmetic
  * settles which counts are even possible.
  *
- * Three pits need three payload types, and the catalogue only opens up at
- * level 13 — before that a third pit would be handed an undefined type.
+ * Three pits need three payload types, so a third pipe has to wait for the
+ * catalogue to open — before that a third pit would be handed no type at all.
  */
 function difficultyFor(level, rng) {
   const pins = targetPins(level);
   const options = [];
   for (const pipes of [2, 3, 4]) {
-    if (pipes > 2 && level < 13) continue;
+    if (pipes > 2 && level < 6) continue;
     const gates = pins - (pipes === 2 ? 1 : 2);
     if (gates >= pipes && gates <= pipes * 4) options.push({ pipes, gates });
   }
@@ -1180,6 +1189,37 @@ function overlap(a, b) {
 }
 
 /**
+ * What a board *is*, coarsely — the things a player registers as sameness.
+ *
+ * Deliberately structure only, with no geometric jitter in it. Jitter cannot
+ * rescue two boards that hold the same number of pins, want the same pull
+ * order, throw the flow the same way and feed the same pits in the same order:
+ * those play identically however differently their glass is bent. That is
+ * exactly how levels 2 and 4 came out the same to play while every geometric
+ * measure I had called them distinct.
+ */
+function playSignature(lv) {
+  const steps = lv.solution.map((id) => /^g(\d+)_/.exec(id)?.[1] ?? 'B');
+  /*
+   * Which pit holds which item is deliberately *not* part of this.
+   *
+   * It was, and it let boards through that a player reads as identical: 1 and
+   * 2 wanted the same pull order and threw the flow the same way, differing
+   * only in whether the coal sat left or right. Swapping the cast is not a new
+   * level. What has to differ is the number of channels, how many pins, the
+   * order they come out in, and which way each blade throws.
+   */
+  return [
+    lv.tubes.filter((t) => t.cap).length,
+    lv.pins.length,
+    steps.filter((s, i) => s !== steps[i - 1]).join('-'),
+    // A ramp pointing right throws the flow right; mirroring the board flips
+    // this, which is correct — a mirrored machine is operated the other way.
+    lv.pins.filter((p) => p.kind === 'ramp').map((p) => (Math.abs(p.angle) < 90 ? 'R' : 'L')).join(''),
+  ].join('|');
+}
+
+/**
  * Build a level, then prove it before keeping it.
  *
  * Level shapes vary a lot now — bore profiles, curve motifs, mirroring,
@@ -1189,7 +1229,7 @@ function overlap(a, b) {
  * candidate is played by the solver and re-rolled if it fails. A level only
  * reaches the JSON if it is winnable, and preferably winnable without waste.
  */
-function buildLevel(level, prevShape) {
+function buildLevel(level, recent) {
   let fallback = null;
   let lookalike = null;
 
@@ -1203,16 +1243,24 @@ function buildLevel(level, prevShape) {
     if (!report.solved) continue;
 
     const shape = silhouette(candidate);
-    const tooSimilar = prevShape && overlap(prevShape, shape) > 0.72;
+    const sig = playSignature(candidate);
+    /*
+     * Compared against a window of recent levels, not just the one before.
+     * Checking only the immediately previous level is what let 2 and 4 come out
+     * identical, and 3 and 5 with them: nothing ever compared a level to the
+     * one two places back, so alternating between two designs passed every
+     * check. A player notices that immediately.
+     */
+    const seen = recent.some((r) => r.sig === sig || overlap(r.shape, shape) > 0.75);
 
-    if (report.clean && !tooSimilar) return { level: candidate, attempt, quality: 'clean', shape };
-    if (report.clean && !lookalike) lookalike = { level: candidate, attempt, quality: 'lookalike', shape };
+    if (report.clean && !seen) return { level: candidate, attempt, quality: 'clean', shape, sig };
+    if (report.clean && !lookalike) lookalike = { level: candidate, attempt, quality: 'lookalike', shape, sig };
     // When nothing comes out clean, keep the *least* wasteful board rather than
     // the first one that merely worked. The player is shown this order as the
     // paid hint, so every item it throws away is the hint lying to them.
     const waste = report.wrong + report.lost;
     if (!fallback || waste < fallback.waste) {
-      fallback = { level: candidate, attempt, quality: 'messy', shape, waste };
+      fallback = { level: candidate, attempt, quality: 'messy', shape, sig, waste };
     }
   }
 
@@ -1224,7 +1272,9 @@ function buildLevel(level, prevShape) {
   // can finish.
   for (let attempt = 0; attempt < 44; attempt++) {
     const last = attemptLevel(level, attempt);
-    if (last) return { level: last, attempt, quality: 'unsolved', shape: silhouette(last) };
+    if (last) {
+      return { level: last, attempt, quality: 'unsolved', shape: silhouette(last), sig: playSignature(last) };
+    }
   }
   throw new Error(`L${level}: no candidate geometry built at all`);
 }
@@ -1232,10 +1282,19 @@ function buildLevel(level, prevShape) {
 const levels = [];
 const quality = { clean: 0, lookalike: 0, messy: 0, unsolved: 0 };
 let totalAttempts = 0;
-let prevShape = null;
+/*
+ * A rolling window of what has just been played, so no board repeats one the
+ * player still remembers. Six is enough to cover a sitting; bonus rounds stay
+ * out of it because they are all one design on purpose.
+ */
+const RECALL = 6;
+const recent = [];
 for (let i = 1; i <= 100; i++) {
-  const built = buildLevel(i, prevShape);
-  prevShape = built.shape;
+  const built = buildLevel(i, recent);
+  if (!built.level.bonus) {
+    recent.push({ shape: built.shape, sig: built.sig });
+    if (recent.length > RECALL) recent.shift();
+  }
   quality[built.quality]++;
   totalAttempts += built.attempt + 1;
   levels.push(built.level);
