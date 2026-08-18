@@ -74,17 +74,26 @@ function plate(lv) {
     .map((p) => `<circle cx="${p.x}" cy="${p.y}" r="${p.r}" class="peg"/>`)
     .join('');
   const pits = lv.receivers
-    .map(
-      (r) =>
-        `<rect x="${(r.x - r.w / 2).toFixed(1)}" y="${r.top}" width="${r.w}" ` +
-        `height="${(r.bottom - r.top).toFixed(1)}" class="pit" ` +
-        `stroke="${TYPE_COLOR[r.accepts] || '#888'}"/>`
+    .map((r) =>
+      r.hazard
+        ? `<rect x="${(r.x - r.w / 2).toFixed(1)}" y="${r.top}" width="${r.w}" ` +
+          `height="${(r.bottom - r.top).toFixed(1)}" class="lava"/>`
+        : `<rect x="${(r.x - r.w / 2).toFixed(1)}" y="${r.top}" width="${r.w}" ` +
+          `height="${(r.bottom - r.top).toFixed(1)}" class="pit" ` +
+          `stroke="${TYPE_COLOR[r.accepts] || '#888'}"/>`
     )
     .join('');
+  // Decoys are drawn hollow: they are the groups the player must recognise and
+  // leave alone, so a sheet that draws them the same as everything else hides
+  // the one thing worth reviewing.
   const items = lv.spawns
     .map((s) =>
       s.items
-        .map(([x, y]) => `<circle cx="${x}" cy="${y}" r="${s.r}" fill="${TYPE_COLOR[s.type] || '#888'}"/>`)
+        .map(([x, y]) =>
+          s.trap
+            ? `<circle cx="${x}" cy="${y}" r="${s.r - 2}" fill="none" stroke-width="4" stroke="${TYPE_COLOR[s.type] || '#888'}"/>`
+            : `<circle cx="${x}" cy="${y}" r="${s.r}" fill="${TYPE_COLOR[s.type] || '#888'}"/>`
+        )
         .join('')
     )
     .join('');
@@ -130,16 +139,23 @@ for (const r of rows) {
 }
 
 const cards = rows
-  .map(({ lv, pipes, gates, lens, key }) => {
+  .map(({ lv, pipes, gates, key }) => {
     const twins = (byKey.get(key) || []).filter((id) => id !== lv.id);
     const tag = lv.bonus
       ? '<span class="tag bonus">bonus</span>'
       : twins.length
         ? `<span class="tag twin">like ${twins.join(', ')}</span>`
         : '';
+    const traps = lv.spawns.filter((s) => s.trap).length;
+    const hasLava = lv.receivers.some((r) => r.hazard);
+    const extras = [
+      traps ? `${traps} decoy${traps > 1 ? 's' : ''}` : null,
+      hasLava ? 'lava' : null,
+    ].filter(Boolean);
     const data = lv.bonus
       ? `${lv.pins.length} pins`
-      : `${pipes} pipes · ${lv.pins.length} pins · ${gates.join('/')} gates · ${lens.join('/')} long`;
+      : `${pipes} pipes · ${lv.pins.length} pins · ${gates.join('/')} gates` +
+        (extras.length ? ` · ${extras.join(' · ')}` : '');
     return `<figure${lv.bonus ? ' class="is-bonus"' : ''}>
   <div class="plate"><span class="no">${lv.id}</span>${plate(lv)}</div>
   <figcaption>
@@ -283,6 +299,7 @@ const html = `<title>Pipe Slide Level Sheet</title>
   .bar { fill: none; stroke: var(--glass); stroke-linejoin: round; stroke-linecap: round; opacity: .5; }
   .peg { fill: none; stroke: var(--glass); stroke-width: 4; }
   .pit { fill: none; stroke-width: 7; opacity: .5; }
+  .lava { fill: #e2571f; opacity: .45; stroke: #b03a10; stroke-width: 6; }
   .rod { stroke: var(--rod); stroke-linecap: round; }
   .rod.ramp { stroke: var(--ramp); }
   .ring { fill: none; stroke: var(--rod); stroke-width: 6; }
@@ -312,6 +329,8 @@ const html = `<title>Pipe Slide Level Sheet</title>
     <i><span class="swatch" style="background:${TYPE_COLOR.gem}"></span>gems</i>
     <i><span class="swatch" style="background:${TYPE_COLOR.coin}"></span>coins</i>
     <i><span class="swatch" style="background:${TYPE_COLOR.bomb}"></span>bombs</i>
+    <i><span class="swatch" style="background:#e2571f"></span>lava &mdash; destroys anything that lands in it</i>
+    <i><span class="swatch" style="background:transparent;border:3px solid #5b7385"></span>decoy: stacked too high to ever reach its pit</i>
     <i><span class="tag twin">like&nbsp;n</span>shares a composition with level n &mdash; check these first</i>
   </div>
 

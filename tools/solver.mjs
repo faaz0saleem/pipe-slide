@@ -144,7 +144,7 @@ function buildLevel(lv) {
       const shrink = { coal: 0.97, gem: 0.94 }[group.type] ?? 1;
       const shape = Bodies.circle(x, y, group.r * shrink, { ...PAYLOAD, label: 'payload' });
       shape.payloadType = group.type;
-      payloads.push({ body: shape, type: group.type, resolved: false });
+      payloads.push({ body: shape, type: group.type, trap: !!group.trap, resolved: false });
     }
   }
 
@@ -251,7 +251,11 @@ export function simulateLevel(lv, { verbose = false } = {}) {
 
   runUntilQuiet(FINAL_FRAMES);
 
-  const stillMoving = payloads.filter((p) => !p.resolved).length;
+  // Trap groups are *meant* to be left in the tube — recognising them and not
+  // pulling them is the puzzle — so they are not a jam. Everything else that
+  // never arrived is.
+  const stillMoving = payloads.filter((p) => !p.resolved && !p.trap).length;
+  const trapsTouched = payloads.filter((p) => p.trap && p.resolved).length;
 
   const report = {
     id: lv.id,
@@ -286,6 +290,9 @@ export function simulateLevel(lv, { verbose = false } = {}) {
    * level the solver was calling clean.
    */
   report.clean = report.solved && wrong === 0 && lost === 0 && stillMoving === 0;
+  // A trap the hint order releases is not a trap. Recorded separately so the
+  // generator can reject that board rather than teach the player a wrong idea.
+  report.trapsTouched = trapsTouched;
   if (verbose) console.log(JSON.stringify(report, null, 2));
   return report;
 }

@@ -3,9 +3,12 @@
  *
  * A wall is a polyline plus a thickness. Physics-wise it becomes one static
  * rectangle per segment with a circle capping every joint, so nothing snags
- * on a corner and nothing tunnels through a seam. Visually it is stroked four
- * times — outer glow, transparent glass body, bright rim, specular streak —
- * which is what sells the "thick glass" read while the fill stays see-through.
+ * on a corner and nothing tunnels through a seam.
+ *
+ * Visually a channel is built up in layers: an outer glow, a tinted bore you
+ * can still read the level through, banding *inside* that bore, and thin bright
+ * rims down each edge. The banding is what actually sells thick glass — a
+ * translucent fill between two outlines is only a tube diagram.
  */
 
 import Phaser from 'phaser';
@@ -176,11 +179,12 @@ export default class PipeSystem {
 
     // --- channels: transparent glass body between two bright rims ---
     for (const tube of this.tubes) {
-      const { left, right, t } = tube;
+      const { left, right } = tube;
 
       // The bore: a pane of tinted glass you can still read the level through.
       this._fillChannel(g, left, right, 0xcfeeff, 0.17);
       this._fillChannel(g, left, right, glowColor, 0.07);
+      this._glassInterior(g, left, right);
 
       // Thin bright rims, the way real glassware reads — not fat bars.
       const edges = [left, right];
@@ -195,8 +199,9 @@ export default class PipeSystem {
         this._fillStroke(g, side, 1.5, 0xffffff, 0.7);
       }
 
-      // Specular streak running down the inside of the left wall.
-      this._specular(g, left, right, rim, t);
+      // A tint of the skin's rim colour along the near wall, so a gold or neon
+      // pipe reads as that material rather than as white glass with a stripe.
+      this._fillStroke(g, this._alongBore(left, right, 0.06), 4, rim, 0.3);
     }
 
     // --- standalone walls (shelves, dividers) keep the solid-bar treatment ---
@@ -222,23 +227,40 @@ export default class PipeSystem {
     }
   }
 
-  /** A highlight just inside one wall, the way light catches curved glass. */
-  _specular(g, left, right, rim, t) {
+  /**
+   * A line running down the bore at a fixed fraction of its width.
+   *
+   * `f` of 0 hugs the left wall and 1 the right, so the same helper places the
+   * specular streak, its narrow companion and the shading near the far wall.
+   */
+  _alongBore(left, right, f) {
     const n = Math.min(left.length, right.length);
     const line = [];
     for (let i = 0; i < n; i++) {
-      const lx = left[i][0];
-      const ly = left[i][1];
-      const dx = right[i][0] - lx;
-      const dy = right[i][1] - ly;
-      const len = Math.hypot(dx, dy) || 1;
-      const inset = t * 0.62;
-      line.push([lx + (dx / len) * inset, ly + (dy / len) * inset]);
+      line.push([
+        left[i][0] + (right[i][0] - left[i][0]) * f,
+        left[i][1] + (right[i][1] - left[i][1]) * f,
+      ]);
     }
-    g.lineStyle(2.5, rim, 0.4);
-    g.beginPath();
-    line.forEach(([x, y], i) => (i ? g.lineTo(x, y) : g.moveTo(x, y)));
-    g.strokePath();
+    return line;
+  }
+
+  /**
+   * What makes the glass read as glass.
+   *
+   * A translucent fill between two rims is only a tube outline; thick glass is
+   * sold by what happens *inside* the bore. Light from the upper left puts a
+   * bright streak just in from the near wall with a thin companion beside it,
+   * and the far side of the bore darkens where the wall's thickness is seen
+   * edge-on. Both follow the curve, so a bend shows the same banding a real
+   * bent tube would.
+   */
+  _glassInterior(g, left, right) {
+    // Shading against the far wall first, so the highlights sit on top of it.
+    this._fillStroke(g, this._alongBore(left, right, 0.87), 13, 0x0b1a2c, 0.13);
+
+    this._fillStroke(g, this._alongBore(left, right, 0.2), 7, 0xffffff, 0.16);
+    this._fillStroke(g, this._alongBore(left, right, 0.12), 2.5, 0xffffff, 0.34);
   }
 
   _rainbow(offset) {

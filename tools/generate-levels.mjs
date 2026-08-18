@@ -210,6 +210,35 @@ function receiver(type, x, top, w, opts = {}) {
   };
 }
 
+/**
+ * A lava trough: a pit that accepts nothing, so whatever lands in it burns.
+ *
+ * The gaps between pits were always where a mistimed payload ended up — it hit
+ * bare ground and quietly vanished. Filling one with lava turns the cheapest
+ * part of the board into the most alarming, and gives a wrong pull a
+ * consequence you watch happen rather than read in a counter.
+ *
+ * It is a receiver like any other, which is the whole trick: the delivery code
+ * already sends anything whose type a pit does not accept down the wasted
+ * path, and `__lava__` matches no payload in the catalogue.
+ */
+function lavaPit(x, top, w) {
+  return {
+    id: 'hazard_lava',
+    kind: 'lava',
+    accepts: '__lava__',
+    hazard: true,
+    x: r1(x),
+    top: r1(top),
+    w: r1(w),
+    bottom: GROUND_Y,
+    required: 0,
+    quota: 0,
+    character: null,
+    charSide: 1,
+  };
+}
+
 /** Shortest distance from a point to a line segment. */
 function distToSeg(px, py, x0, y0, x1, y1) {
   const dx = x1 - x0;
@@ -329,7 +358,7 @@ function shiftBottom(dx, walls, pins, receivers, fromWall, fromPin, fromRecv) {
  * rather than as constants, and the solver rejects any board that does not
  * play, so this can vary without going quietly wrong.
  */
-function bottomCascade(rng, types, channel, pins, receivers) {
+function bottomCascade(rng, types, channel, pins, receivers, lava) {
   const blades = types.length - 1;
   const jit = (base, range) => base + Math.round((rng() - 0.5) * range);
   const cx = W / 2;
@@ -375,10 +404,18 @@ function bottomCascade(rng, types, channel, pins, receivers) {
 
   for (const r of ramps) pins.push(rampPin(r.id, r.x0, r.y0, r.x1, r.y1));
 
-  // A pit sits under the end of its ramp, pulled a little further out so the
-  // payload rolls in rather than stalling on the near lip.
+  /*
+   * A pit sits under the end of its ramp, pulled a little further out so the
+   * payload rolls in rather than stalling on the near lip.
+   *
+   * Boards carrying lava run their pits narrower. The trough needs somewhere
+   * to be, and taking the room from the pits is better than shuffling them:
+   * a pit's position is what makes it catch what its blade throws, and moving
+   * one breaks that. A narrower pit still catches; it just forgives less.
+   */
+  const squeeze = lava ? (blades > 1 ? 0.7 : 0.78) : 1;
   ramps.forEach((r, k) => {
-    const w = jit(198, 44);
+    const w = Math.round(jit(198, 44) * squeeze);
     const x =
       r.dir > 0
         ? Math.min(W - 14 - w / 2, r.x1 + jit(32, 22))
@@ -386,8 +423,47 @@ function bottomCascade(rng, types, channel, pins, receivers) {
     receivers.push(receiver(types[k], x, jit(1016, 48), w, { charSide: x < cx ? -1 : 1 }));
   });
   receivers.push(
-    receiver(types[blades], cx, jit(1042, 14), jit(254, 42), { charSide: rng() < 0.5 ? -1 : 1 })
+    receiver(types[blades], cx, jit(1042, 14), Math.round(jit(254, 42) * squeeze), {
+      charSide: rng() < 0.5 ? -1 : 1,
+    })
   );
+
+  // Two pits sharing ground is a real defect however small the overlap: a
+  // payload in the shared sliver is delivered to whichever sensor reports it
+  // first, so the player can be marked wrong for a throw that was right.
+  const spans = receivers.map((r) => [r.x - r.w / 2, r.x + r.w / 2]).sort((a, b) => a[0] - b[0]);
+  for (let i = 1; i < spans.length; i++) if (spans[i][0] < spans[i - 1][1]) return null;
+
+  /*
+   * Put the lava in the widest stretch of open ground.
+   *
+   * Beside the pits counts, not just between them — on a two-pit board the
+   * empty half of the floor is the widest space there is, and it is exactly
+   * where a mistimed payload rolls off to. Lava goes there rather than
+   * replacing a pit, because every pit is owed a delivery and taking one away
+   * leaves its stage nowhere to go. The routing does not change; only the
+   * consequence becomes something you watch instead of read in a counter. If
+   * the solver finds a correct play still feeds it, the board is redrawn.
+   */
+  if (lava) {
+    const open = [[0, spans[0][0]]];
+    for (let i = 1; i < spans.length; i++) open.push([spans[i - 1][1], spans[i][0]]);
+    open.push([spans.at(-1)[1], W]);
+
+    const best = open.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a));
+    const room = best[1] - best[0];
+    /*
+     * A trough two payloads wide is enough to swallow one, and that is the bar.
+     * Holding out for a hundred pixels of clear ground only ever found room on
+     * two-pit boards — the pits on a three-pit board sit evenly spread, so the
+     * widest gap is around eighty however hard they are squeezed, and lava
+     * landed on five levels in ninety instead of the intended thirty.
+     */
+    if (room >= 74) {
+      const w = Math.min(room - 12, 250);
+      receivers.push(lavaPit((best[0] + best[1]) / 2, jit(1058, 12), w));
+    }
+  }
 
   return {
     bowlTop: neckTop - jit(132, 28),
@@ -467,7 +543,7 @@ const WAVE_SKEW = { 1: [1.0, 2.2], 2: [1.0, 1.7], 3: [1.0, 1.0] };
 
 const smoothstep = (u) => u * u * (3 - 2 * u);
 
-function inletControls(count, exitY, rng, halves) {
+function inletControls(count, exitY, rng, halves, gates) {
   // Where each pipe starts across the top and where it has to arrive.
   // Four reservoirs already sit twenty pixels apart, so they get almost no
   // room to shuffle; two have the whole board.
@@ -500,7 +576,11 @@ function inletControls(count, exitY, rng, halves) {
    * payload the rest of the way into the bowl mouth — short stubby flasks
    * beside long snaking ones, and a cascade where there used to be a row.
    */
-  const exitYs = tops.map(() => exitY - Math.round(rng() * rng() * 190));
+  // How far a pipe may end short of the bowl depends on what it has to hold: a
+  // channel carrying four stacks needs nearly its full length, and lifting it
+  // anyway leaves the topmost gates with no room for payload behind them.
+  const LIFT = { 1: 190, 2: 140, 3: 60 };
+  const exitYs = tops.map((_, i) => exitY - Math.round(rng() * rng() * (LIFT[gates[i]] ?? 190)));
 
   /*
    * Wave shape.
@@ -755,7 +835,7 @@ function groupSize(rng, level, gates) {
  * before, never more, so the run never feels like it went backwards.
  */
 function targetPins(level) {
-  return Math.min(18, 3 + Math.round(((level - 1) / 98) * 14) + ((level * 7) % 3 === 0 ? 1 : 0));
+  return Math.min(14, 3 + Math.round(((level - 1) / 98) * 10) + ((level * 7) % 3 === 0 ? 1 : 0));
 }
 
 /**
@@ -777,7 +857,7 @@ function difficultyFor(level, rng) {
   for (const pipes of [2, 3, 4]) {
     if (pipes > 2 && level < 6) continue;
     const gates = pins - (pipes === 2 ? 1 : 2);
-    if (gates >= pipes && gates <= pipes * 4) options.push({ pipes, gates });
+    if (gates >= pipes && gates <= pipes * 3) options.push({ pipes, gates });
   }
   if (!options.length) return { pipes: 4, gates: Math.max(4, Math.min(16, pins - 2)) };
   return options[Math.floor(rng() * options.length) % options.length];
@@ -813,6 +893,69 @@ function stackStages(rng, gates, stages) {
 }
 
 /**
+ * Traps: groups that can never reach their pit, which the player must work out
+ * and leave alone.
+ *
+ * Without these a level needs no thought. The stack order tells you the answer
+ * — read each tube bottom-up, pull whatever the open pit wants — and there is
+ * exactly one legal order, so there is nothing to weigh up. A trap adds a move
+ * that looks perfectly reasonable and is wrong.
+ *
+ * The reasoning it forces is real, and it rests on how a tube empties. Group k
+ * rests on gate k, and pulling gate k only drops it as far as the group below,
+ * so nothing can leave before everything under it has. That means a group's
+ * earliest possible exit is the stage its *lower neighbour* leaves at. Give
+ * group k an item whose pit closes before that, and it can never get out in
+ * time however it is played: pulling that gate wastes it and upsets the person
+ * waiting. The right move is to never touch it.
+ *
+ * To see it, a player has to read the stack, know the order the blades serve
+ * the pits in, and run it forward in their head. That is the two or three
+ * minutes of thinking; the trap is also the thing they learn to spot, which is
+ * what makes the next board interesting rather than routine.
+ *
+ * @returns {Array<{pipe:number, group:number, stage:number}>}
+ */
+function pickTraps(rng, plan, level) {
+  // None while the machine is still being taught; at most one for a good while
+  // after that, so the idea is met on a board simple enough to see it on.
+  const budget = level < 12 ? 0 : level < 40 ? 1 : 2;
+  if (budget < 1) return [];
+
+  const slots = [];
+  plan.forEach((stages, pipe) => {
+    for (let g = 1; g < stages.length; g++) {
+      // A trap has to be strictly earlier than the group below it can leave,
+      // or the player could simply pull it early and be rewarded for it.
+      if (stages[g - 1] > 0) slots.push({ pipe, group: g, below: stages[g - 1] });
+    }
+  });
+
+  // How many groups genuinely serve each stage. A decoy borrows that stage's
+  // item, so a stage with one legit group would end up with more of its item
+  // unusable than usable — which reads as a pile of junk rather than a trap.
+  const legit = [];
+  for (const stages of plan) for (const s of stages) legit[s] = (legit[s] || 0) + 1;
+
+  const traps = [];
+  while (traps.length < budget && slots.length) {
+    const s = slots.splice(Math.floor(rng() * slots.length) % slots.length, 1)[0];
+    // Leave the rest of that tube alone: two traps in one stack is unreadable.
+    for (let i = slots.length - 1; i >= 0; i--) if (slots[i].pipe === s.pipe) slots.splice(i, 1);
+
+    // Any stage below this group's would work; take one that can spare an item.
+    const affordable = [];
+    for (let st = 0; st < s.below; st++) if ((legit[st] || 0) >= 2) affordable.push(st);
+    if (!affordable.length) continue;
+
+    const stage = affordable[Math.floor(rng() * affordable.length) % affordable.length];
+    legit[stage]--;
+    traps.push({ pipe: s.pipe, group: s.group, stage });
+  }
+  return traps;
+}
+
+/**
  * Stage assignments for every tube, with every pit guaranteed a delivery and
  * at least one tube spanning a blade flip.
  *
@@ -844,7 +987,7 @@ function stackPlan(rng, perPipe, stages) {
  * from each other *and* internally. Every pipe keeps at least one gate — a
  * pipe with none holds no payload and is just scenery.
  */
-function shareGates(rng, pipes, budget, max = 4) {
+function shareGates(rng, pipes, budget, max = 3) {
   const out = new Array(pipes).fill(1);
   let left = Math.max(0, Math.min(budget, pipes * max) - pipes);
   while (left > 0 && out.some((n) => n < max)) {
@@ -892,7 +1035,19 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   // pit never leaves the board.
   const shift = [-96, -48, 0, 0, 48, 96][Math.floor(rng() * 6) % 6];
 
-  const bottom = bottomCascade(rng, pitTypes, channel, pins, receivers);
+  /*
+   * Lava shows up once the machine is understood, on a fixed two boards in
+   * five from then on.
+   *
+   * Decided by level number rather than by a draw from the level's rng, which
+   * matters more than it looks: a board is re-rolled a dozen times or more, and
+   * a per-attempt coin flip meant lava only survived if the *winning* attempt
+   * happened to call for it. Since lava boards are the harder ones to satisfy,
+   * they lost that race almost every time — five levels in ninety got it, none
+   * past level 36. Pinning it to the level makes every attempt aim for it.
+   */
+  const bottom = bottomCascade(rng, pitTypes, channel, pins, receivers, level >= 18 && level % 5 < 2);
+  if (!bottom) return null; // pits would have overlapped; the caller re-rolls
 
   // Clamp so the outermost pit never leaves the board.
   const minX = Math.min(...receivers.map((r) => r.x - r.w / 2));
@@ -931,12 +1086,18 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   // depends on how fat it is at that depth, and a narrowed spout has room a
   // reservoir does not.
   const shapes = Array.from({ length: inletCount }, pipeProfile);
-  const controls = inletControls(inletCount, exitY, rng, shapes.map((s) => s.fn));
+  // How many gates each pipe carries is settled first, because it decides how
+  // much tube that pipe needs: four stacks will not fit in a channel that has
+  // been lifted clear of the bowl.
   const perPipe = shareGates(rng, inletCount, gateCount);
+  const controls = inletControls(inletCount, exitY, rng, shapes.map((s) => s.fn), perPipe);
   // Which stage each group serves. `bottom.order` is the sequence the machine
   // presents its pits in, so a stage index is a position in that sequence.
   const plan = stackPlan(rng, perPipe, bottom.order.length);
   if (!plan) return null;
+
+  const traps = pickTraps(rng, plan, level);
+  const trapAt = (pipe, group) => traps.find((t) => t.pipe === pipe && t.group === group);
 
   // Each inlet: a curved tube, its gates, and a payload group behind each gate.
   const gatesByStage = bottom.order.map(() => []);
@@ -959,11 +1120,23 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
     pins.push(...gates);
 
     gates.forEach((gate, gi) => {
-      const stage = plan[i][gi];
-      spawns.push(
-        fillTube(rng, built.path, gate, len * fractions[gi], gates[gi + 1] || null,
-          groupSize(rng, level, perPipe[i]), bottom.order[stage], boreAt)
-      );
+      const trap = trapAt(i, gi);
+      const stage = trap ? trap.stage : plan[i][gi];
+      // A decoy is a small clump, not a pile. One or two items reads as "a
+      // couple stranded up high", which is the thing to notice; a full-size
+      // group would put more of that item out of reach than in reach and the
+      // board would look like junk rather than a puzzle with a trap in it.
+      const size = trap ? irange(rng, 1, 2) : groupSize(rng, level, perPipe[i]);
+      const group = fillTube(rng, built.path, gate, len * fractions[gi], gates[gi + 1] || null,
+        size, bottom.order[stage], boreAt);
+      if (trap) {
+        // Marked so the pits do not ask for items nobody can deliver, and so
+        // the solver does not count a deliberately abandoned group as a jam.
+        group.trap = true;
+        spawns.push(group);
+        return;
+      }
+      spawns.push(group);
       // Appending in gate order keeps each tube's own groups bottom-up, which
       // is the only order they can physically leave in.
       gatesByStage[stage].push(gate.id);
@@ -975,6 +1148,28 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   // floor is deliberately just under the 20px the reservoirs are packed at on
   // a four-pipe board: this is a crossing detector, not a spacing preference.
   if (!channelsAreClear(bores, 17)) return null;
+
+  /*
+   * Every gate must hold something.
+   *
+   * fillTube stacks a group upward from its gate and stops when it runs out of
+   * tube, so a channel with more gates than it has length for quietly produces
+   * groups with no items in them. Those gates are pins that do nothing at all:
+   * pulling one has no consequence either way, which is worse than a bad puzzle
+   * because it teaches the player that pins might be meaningless. Nearly a
+   * third of every group in the game came out empty before this was checked.
+   */
+  if (spawns.some((s) => !s.items.length)) return null;
+
+  // Decoys must stay the minority of every item. Small trap groups make that
+  // true in almost every case; this catches the rest rather than trusting it.
+  const reach = {};
+  const decoy = {};
+  for (const s of spawns) {
+    const bucket = s.trap ? decoy : reach;
+    bucket[s.type] = (bucket[s.type] || 0) + s.items.length;
+  }
+  for (const type of Object.keys(decoy)) if (decoy[type] >= (reach[type] || 0)) return null;
 
   // Empty everything the current pit wants — wherever it happens to sit —
   // then flip the blade. That is no longer "one pipe per stage": a stage may
@@ -1093,12 +1288,19 @@ function attemptLevel(level, attempt) {
     if (!core) return null; // geometry rejected itself; the caller re-rolls
   }
 
-  // Pits ask for everything that spawns, minus the spare items.
+  // Pits ask for everything that spawns, minus the spare items — and minus the
+  // traps, which are unreachable by construction. A pit that counted them
+  // would be asking for deliveries nobody can make.
   const totals = {};
-  for (const s of core.spawns) totals[s.type] = (totals[s.type] || 0) + s.items.length;
+  for (const s of core.spawns) {
+    if (s.trap) continue;
+    totals[s.type] = (totals[s.type] || 0) + s.items.length;
+  }
 
   const isBonus = core.family === 'vault';
   for (const r of core.receivers) {
+    // A lava trough is owed nothing — it is there to destroy, not to receive.
+    if (r.hazard) continue;
     const available = totals[r.accepts] || 0;
     // Spare items are capped as a fraction of the group: enough to absorb a
     // mistake, never enough to make the pit trivial. Four-pipe levels move a
@@ -1229,11 +1431,25 @@ function playSignature(lv) {
  * candidate is played by the solver and re-rolled if it fails. A level only
  * reaches the JSON if it is winnable, and preferably winnable without waste.
  */
+/**
+ * Play a board the greedy way — every pin, including the ones the solution
+ * leaves alone — and report whether that costs the player anything.
+ *
+ * A board with no traps has nothing to prove and passes.
+ */
+function trapsBite(lv) {
+  const skipped = lv.pins.filter((p) => p.kind === 'gate' && !lv.solution.includes(p.id));
+  if (!skipped.length) return true;
+  const greedy = { ...lv, solution: [...lv.solution, ...skipped.map((p) => p.id)] };
+  const r = simulateLevel(greedy);
+  return r.wrong + r.lost > 0;
+}
+
 function buildLevel(level, recent) {
   let fallback = null;
   let lookalike = null;
 
-  for (let attempt = 0; attempt < 44; attempt++) {
+  for (let attempt = 0; attempt < 240; attempt++) {
     const candidate = attemptLevel(level, attempt);
 
     // Cheap rejections first: no point simulating a broken board.
@@ -1241,6 +1457,9 @@ function buildLevel(level, recent) {
 
     const report = simulateLevel(candidate);
     if (!report.solved) continue;
+    // A trap the intended order releases is not a trap — it would teach the
+    // player the opposite of the lesson. Throw the board away.
+    if (report.trapsTouched) continue;
 
     const shape = silhouette(candidate);
     const sig = playSignature(candidate);
@@ -1253,7 +1472,21 @@ function buildLevel(level, recent) {
      */
     const seen = recent.some((r) => r.sig === sig || overlap(r.shape, shape) > 0.75);
 
-    if (report.clean && !seen) return { level: candidate, attempt, quality: 'clean', shape, sig };
+    /*
+     * A trap has to actually cost something.
+     *
+     * That it *should* be unreachable follows from how a tube empties, but
+     * "should" is not good enough for the one pin a player is meant to agonise
+     * over: a decoy that turns out to be harmless teaches them the opposite
+     * lesson, and a couple slipped through on that reasoning alone. So the
+     * board is played a second way — the greedy way, pulling every pin
+     * including the ones the solution leaves — and kept only if that hurts.
+     *
+     * Run last and only on a board that is otherwise ready, so it costs one
+     * extra playthrough per level rather than one per attempt.
+     */
+    const tempting = report.clean && !seen && trapsBite(candidate);
+    if (tempting) return { level: candidate, attempt, quality: 'clean', shape, sig };
     if (report.clean && !lookalike) lookalike = { level: candidate, attempt, quality: 'lookalike', shape, sig };
     // When nothing comes out clean, keep the *least* wasteful board rather than
     // the first one that merely worked. The player is shown this order as the
@@ -1270,7 +1503,7 @@ function buildLevel(level, recent) {
   // Nothing played. Hand back the first candidate that at least built, so the
   // build fails loudly downstream rather than silently shipping a level nobody
   // can finish.
-  for (let attempt = 0; attempt < 44; attempt++) {
+  for (let attempt = 0; attempt < 240; attempt++) {
     const last = attemptLevel(level, attempt);
     if (last) {
       return { level: last, attempt, quality: 'unsolved', shape: silhouette(last), sig: playSignature(last) };

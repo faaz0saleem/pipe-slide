@@ -23,6 +23,9 @@ export default class Receiver {
     this.delivered = 0;
     this.wasted = 0;
     this.style = RECEIVER_STYLE[def.kind];
+    // A hazard destroys instead of receiving: nothing is owed to it, so it has
+    // no quota and no meter, and it must never hold up the win.
+    this.hazard = !!def.hazard;
 
     this.x = def.x;
     this.top = def.top;
@@ -32,7 +35,7 @@ export default class Receiver {
 
     this._buildBodies();
     this._draw();
-    this._buildMeter();
+    if (!this.hazard) this._buildMeter();
   }
 
   /* ------------------------------ physics ----------------------------- */
@@ -338,7 +341,42 @@ export default class Receiver {
     this.wasteText.setOrigin(0.5).setVisible(false);
     this.wasteText.setShadow(0, 2, 'rgba(0,0,0,0.7)', 3);
 
-    this.meter.add([g, icon, this.meterText, this.wasteText]);
+    /*
+     * A ring that lights up while this is the pit the flow currently reaches.
+     *
+     * The board is only worth thinking about if it can be reasoned out. Which
+     * pit is live depends on how many blades are still in place, which is
+     * readable but easy to get wrong, and a puzzle you have to guess at is
+     * frustrating rather than interesting. Showing it moves the difficulty
+     * where it belongs: not "which pit is open now" but "given the order these
+     * open in, which pins can I afford to pull".
+     */
+    this.liveRing = this.scene.add.graphics();
+    this.liveRing.lineStyle(3, PAYLOAD_STYLE[this.accepts].icon, 1);
+    this.liveRing.strokeRoundedRect(-w / 2 - 5, -22, w + 10, 44, 22);
+    this.liveRing.setAlpha(0);
+
+    this.meter.add([g, icon, this.meterText, this.wasteText, this.liveRing]);
+  }
+
+  /** Called by the scene whenever a blade comes out and the target changes. */
+  setLive(live) {
+    if (this.isLive === live) return;
+    this.isLive = live;
+    this.scene.tweens.killTweensOf(this.liveRing);
+    if (!live) {
+      this.scene.tweens.add({ targets: this.liveRing, alpha: 0, duration: 200 });
+      return;
+    }
+    this.liveRing.setAlpha(1);
+    this.scene.tweens.add({
+      targets: this.liveRing,
+      alpha: { from: 1, to: 0.35 },
+      duration: 780,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.inOut',
+    });
   }
 
   _refreshMeter() {
@@ -366,7 +404,7 @@ export default class Receiver {
   }
 
   get isSatisfied() {
-    return this.delivered >= this.required;
+    return this.hazard || this.delivered >= this.required;
   }
 
   /**
@@ -496,6 +534,9 @@ export default class Receiver {
   }
 
   destroy() {
+    // The live-pit ring holds a looping tween; destroying its container is not
+    // enough to stop the tween from touching a dead target.
+    this.scene.tweens.killTweensOf(this.liveRing);
     for (const b of this.walls) this.scene.matter.world.remove(b);
     this.scene.matter.world.remove(this.sensor);
     this.backGfx.destroy();

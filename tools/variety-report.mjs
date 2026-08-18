@@ -159,6 +159,19 @@ for (const l of nonBonus) {
 console.log(`solutions "drain a pipe, flip" ${oneRunPerPipe}/${nonBonus.length}`);
 console.log(`distinct solution shapes   ${shapes.size}/${nonBonus.length}`);
 
+/* --- is there anything to think about? ---------------------------------
+ * A trap group is one stacked too high to ever reach its pit, so working out
+ * which pins to leave alone is the puzzle. Without them a board is read off
+ * rather than solved: the stack order gives the answer and there is exactly
+ * one legal move at each step. */
+const trapped = nonBonus.filter((l) => l.spawns.some((s) => s.trap));
+const trapGroups = nonBonus.reduce((n, l) => n + l.spawns.filter((s) => s.trap).length, 0);
+const decisions = nonBonus.map((l) => l.pins.length - l.solution.length);
+console.log(`levels with a trap         ${trapped.length}/${nonBonus.length}  (${trapGroups} groups)`);
+console.log(
+  `pins to leave alone        ${Math.min(...decisions)}..${Math.max(...decisions)} per level`
+);
+
 /* --- boards that play the same ----------------------------------------
  * Structure only: how many channels, how many pins, the pull order, and which
  * way each blade throws. Two levels matching on all of that play identically

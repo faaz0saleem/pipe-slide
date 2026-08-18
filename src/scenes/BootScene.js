@@ -14,6 +14,11 @@ const TIPS = [
   'Pins can only be pulled once — think before you tug.',
   'Coal warms the shivering folk. Apples feed the hungry ones.',
   'Ramps redirect the flow. Pull one and everything below changes.',
+  'The glowing pit is the one the flow reaches right now.',
+  // The trap rule, in the words a player would use. It is the only rule they
+  // cannot work out from watching, so it has to be said somewhere.
+  'A tube empties from the bottom up. Nothing leaves before what is under it.',
+  'Some items are stacked too high to ever reach their pit. Leave those pins.',
   'Every tenth level is a coin rush. Fill that vault.',
   'Deliver every last item for the second star.',
   'Beat the target time for the third star.',

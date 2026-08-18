@@ -77,7 +77,7 @@ const shot = async (name, setup, settleSteps=0) => {
 
 // Two, three and four pipes across the difficulty range. No bonus rounds:
 // see the note in shot() — they cannot be captured here.
-for (const id of [4, 12, 22, 44, 55, 78, 99]) {
+for (const id of [4, 12, 25, 44, 55, 76, 99]) {
   await shot(`level-${id}`, (lv)=>{ const g=window.game;
     g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Game',{levelId:lv}); }, 90);
 }

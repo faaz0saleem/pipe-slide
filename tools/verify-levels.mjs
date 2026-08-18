@@ -60,18 +60,58 @@ for (const lv of doc.levels) {
   }
   const solSet = new Set(lv.solution);
   if (solSet.size !== lv.solution.length) errors.push(at('solution repeats a pin'));
+  /*
+   * A gate the solution never pulls should be a trap, and every trap should be
+   * such a gate. Both halves matter: a trap the hint order pulls teaches the
+   * player the opposite of the lesson, and a gate omitted with a *deliverable*
+   * group behind it means those items can never arrive and the pit will be
+   * short through no fault of the player.
+   *
+   * The generator emits one spawn group per gate, in gate order, so the two
+   * lists line up index for index. Bonus rounds do not follow that shape.
+   */
+  if (!lv.bonus) {
+    const gates = lv.pins.filter((p) => p.kind === 'gate');
+    if (gates.length !== lv.spawns.length) {
+      errors.push(at(`${gates.length} gates but ${lv.spawns.length} payload groups`));
+    } else {
+      gates.forEach((g, i) => {
+        const isTrap = !!lv.spawns[i].trap;
+        if (isTrap && solSet.has(g.id)) errors.push(at(`solution pulls trap gate ${g.id}`));
+        if (!isTrap && !solSet.has(g.id)) {
+          errors.push(at(`gate ${g.id} is never pulled but its group is deliverable`));
+        }
+      });
+    }
+  }
   for (const p of lv.pins) {
-    if (!solSet.has(p.id)) warnings.push(at(`pin ${p.id} is never used by the solution`));
+    if (!solSet.has(p.id) && p.kind !== 'gate') {
+      warnings.push(at(`pin ${p.id} is never used by the solution`));
+    }
   }
 
   /* --- receivers vs spawns ---------------------------------------- */
+  // Trap groups are stacked too high to ever reach their pit, so they are not
+  // part of what a pit could be asked for. Counting them made every trap level
+  // look as though its quotas were far too generous.
   const totals = {};
+  const decoys = {};
   for (const s of lv.spawns) {
-    totals[s.type] = (totals[s.type] || 0) + s.items.length;
+    // A gate with nothing behind it is a pin that does nothing, which teaches
+    // the player that pins may be meaningless.
+    if (!s.items.length) errors.push(at(`empty ${s.type} group — its gate does nothing`));
+    const bucket = s.trap ? decoys : totals;
+    bucket[s.type] = (bucket[s.type] || 0) + s.items.length;
     if (!doc.payloads[s.type]) errors.push(at(`unknown payload type ${s.type}`));
   }
   const accepted = new Set();
   for (const r of lv.receivers) {
+    // A lava trough accepts nothing on purpose: it destroys what lands in it,
+    // so none of the quota checks below apply to it.
+    if (r.hazard) {
+      if (r.required !== 0) errors.push(at('lava trough has a quota'));
+      continue;
+    }
     if (accepted.has(r.accepts)) errors.push(at(`two pits both accept ${r.accepts}`));
     accepted.add(r.accepts);
     const available = totals[r.accepts] || 0;
@@ -80,6 +120,12 @@ for (const lv of doc.levels) {
     }
     // Non-bonus pits leave a few spare items so a wrong pull wastes rather
     // than dead-ends, but they must still ask for most of the group.
+    // Decoys must stay the minority of any item, or the board reads as a pile
+    // of things you cannot use rather than a puzzle with a trap in it.
+    const decoy = decoys[r.accepts] || 0;
+    if (decoy >= available) {
+      errors.push(at(`pit ${r.kind}: ${decoy} decoy ${r.accepts} vs only ${available} reachable`));
+    }
     if (!lv.bonus && r.required < Math.ceil(available * 0.45)) {
       errors.push(at(`pit ${r.kind} only wants ${r.required} of ${available} — too generous`));
     }

@@ -102,6 +102,7 @@ export default class GameScene extends Phaser.Scene {
     this.matter.world.on('collisionactive', this._onCollisionActive, this);
 
     this._routePinTaps();
+    this._markLivePit();
 
     this.scene.launch('Hud', { levelId: this.levelId });
     this.hud = this.scene.get('Hud');
@@ -225,7 +226,13 @@ export default class GameScene extends Phaser.Scene {
 
     for (const group of this.level.spawns) {
       for (const [x, y] of group.items) {
-        this.payloads.push(new Payload(this, group.type, x, y, group.r, trail));
+        const p = new Payload(this, group.type, x, y, group.r, trail);
+        // A trap group can never reach its pit from where it sits — spotting
+        // that and leaving it alone is the puzzle. It must not count towards
+        // what is still deliverable, or the game cannot tell that a board has
+        // become unwinnable and leaves the player staring at nothing to do.
+        p.trap = !!group.trap;
+        this.payloads.push(p);
       }
     }
     this.totalPayloads = total;
@@ -302,8 +309,29 @@ export default class GameScene extends Phaser.Scene {
     this.cameras.main.shake(90, 0.003);
     this._dustAt(pin.def.x, pin.def.y);
 
+    this._markLivePit();
     this.hintPin = null;
     this.settleTimer = 0;
+  }
+
+  /**
+   * Light up the pit the flow currently reaches.
+   *
+   * Each blade in place diverts the flow to its own pit, so the number of
+   * blades already pulled *is* the index of the live one — and the pits arrive
+   * in level data in exactly the order the machine serves them, which is how
+   * the generator emits them.
+   */
+  _markLivePit() {
+    const pulledBlades = this.pins.filter((p) => p.def.kind === 'ramp' && p.pulled).length;
+    // Hazards are not part of the cascade, so they are skipped when counting
+    // which pit the blades currently point at.
+    let stage = 0;
+    for (const r of this.receivers) {
+      if (r.hazard) continue;
+      r.setLive(stage === pulledBlades);
+      stage++;
+    }
   }
 
   /** Wake every payload still in play. Cheap: pin pulls are rare. */
@@ -465,8 +493,46 @@ export default class GameScene extends Phaser.Scene {
     payload.consume();
     receiver.reject(x, y);
 
-    this.cameras.main.shake(180, 0.007);
-    this._waste(payload.type, x, y, `Wrong pit!`);
+    // Lava is not a pit that turned it away — it is gone. Say so, and hit
+    // harder: watching the mistake burn is the point of putting it there.
+    const burned = receiver.hazard;
+    this.cameras.main.shake(burned ? 300 : 180, burned ? 0.012 : 0.007);
+    if (burned) this._lavaSplash(x, y);
+    this._waste(payload.type, x, y, burned ? 'Burned up!' : 'Wrong pit!');
+  }
+
+  /** Molten spatter and a puff of smoke where something went into the lava. */
+  _lavaSplash(x, y) {
+    const spatter = this.add.particles(x, y, 'fx_dot', {
+      speed: { min: 120, max: 340 },
+      angle: { min: 215, max: 325 },
+      gravityY: 900,
+      scale: { start: 0.6, end: 0 },
+      lifespan: { min: 340, max: 620 },
+      quantity: 16,
+      tint: [0xffd166, 0xff7a2f, 0xd93a1a],
+      blendMode: 'ADD',
+    });
+    spatter.setDepth(DEPTH.fx);
+    spatter.explode(16);
+
+    const smoke = this.add.particles(x, y - 10, 'fx_glow', {
+      speed: { min: 10, max: 50 },
+      speedY: { min: -90, max: -30 },
+      scale: { start: 0.28, end: 0.7 },
+      alpha: { start: 0.5, end: 0 },
+      lifespan: 900,
+      quantity: 5,
+      tint: 0x2b1a14,
+    });
+    smoke.setDepth(DEPTH.fx);
+    smoke.explode(5);
+
+    sound.play('error');
+    this.time.delayedCall(1000, () => {
+      spatter.destroy();
+      smoke.destroy();
+    });
   }
 
   _losePayload(payload) {
@@ -526,9 +592,9 @@ export default class GameScene extends Phaser.Scene {
     if (!this._checkRanOut()) this._checkWin();
   }
 
-  /** How many of a type are still in play. */
+  /** How many of a type could still be delivered. Traps never could. */
   _aliveOf(type) {
-    return this.payloads.filter((p) => !p.resolved && p.sprite && p.type === type).length;
+    return this.payloads.filter((p) => !p.resolved && p.sprite && p.type === type && !p.trap).length;
   }
 
   /**
@@ -742,14 +808,22 @@ export default class GameScene extends Phaser.Scene {
    * end the level rather than leaving the player staring at it.
    */
   _checkStuck(delta) {
-    const allPinsPulled = this.pins.every((p) => p.pulled);
-    if (!allPinsPulled) {
+    const alive = this.payloads.filter((p) => !p.resolved && p.sprite);
+    const moving = alive.some((p) => p.speed > SETTLE_SPEED);
+
+    /*
+     * A board can become unwinnable while pins are still un-pulled, now that
+     * some of them are traps the player is right to leave alone. If a quota can
+     * no longer be met and nothing is moving, nothing ever will be — waiting
+     * for every pin to come out would leave the player staring at a dead board
+     * with no win and no loss.
+     */
+    if (!moving && this._checkRanOut()) return;
+
+    if (!this.pins.every((p) => p.pulled)) {
       this.settleTimer = 0;
       return;
     }
-
-    const alive = this.payloads.filter((p) => !p.resolved && p.sprite);
-    const moving = alive.some((p) => p.speed > SETTLE_SPEED);
     if (moving) {
       this.settleTimer = 0;
       return;
