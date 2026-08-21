@@ -100,12 +100,16 @@ function buildLevel(lv) {
   const receivers = lv.receivers.map((def) => {
     const halfW = def.w / 2;
     const h = def.bottom - def.top;
+    // Mirrors Receiver._buildBodies: a hazard has no walls, so a lava pool
+    // inside a channel does not plug the bore.
     const opts = { isStatic: true, friction: 0.2, restitution: 0.02, label: 'wall' };
-    statics.push(
-      Bodies.rectangle(def.x - halfW - RECEIVER_WALL_T / 2, def.top + h / 2, RECEIVER_WALL_T, h, opts),
-      Bodies.rectangle(def.x + halfW + RECEIVER_WALL_T / 2, def.top + h / 2, RECEIVER_WALL_T, h, opts),
-      Bodies.rectangle(def.x, def.bottom + RECEIVER_WALL_T / 2, def.w + RECEIVER_WALL_T * 2, RECEIVER_WALL_T, opts)
-    );
+    if (!def.hazard) {
+      statics.push(
+        Bodies.rectangle(def.x - halfW - RECEIVER_WALL_T / 2, def.top + h / 2, RECEIVER_WALL_T, h, opts),
+        Bodies.rectangle(def.x + halfW + RECEIVER_WALL_T / 2, def.top + h / 2, RECEIVER_WALL_T, h, opts),
+        Bodies.rectangle(def.x, def.bottom + RECEIVER_WALL_T / 2, def.w + RECEIVER_WALL_T * 2, RECEIVER_WALL_T, opts)
+      );
+    }
     return { def, delivered: 0, wrong: 0 };
   });
 

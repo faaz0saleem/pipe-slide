@@ -211,27 +211,27 @@ function receiver(type, x, top, w, opts = {}) {
 }
 
 /**
- * A lava trough: a pit that accepts nothing, so whatever lands in it burns.
+ * A pool of lava sitting inside a glass channel.
  *
- * The gaps between pits were always where a mistimed payload ended up — it hit
- * bare ground and quietly vanished. Filling one with lava turns the cheapest
- * part of the board into the most alarming, and gives a wrong pull a
- * consequence you watch happen rather than read in a counter.
+ * It goes in the bore directly under a decoy's gate, which is the whole point:
+ * pull that pin and the group drops straight into it and burns, in the glass,
+ * in front of you. Wasting used to be a number going up in the corner.
  *
- * It is a receiver like any other, which is the whole trick: the delivery code
- * already sends anything whose type a pit does not accept down the wasted
- * path, and `__lava__` matches no payload in the catalogue.
+ * It is a receiver like any other, which is the trick that makes this cheap:
+ * the delivery code already sends anything whose type a pit does not accept
+ * down the wasted path, and `__lava__` matches no payload in the catalogue. It
+ * carries no walls, or it would plug the channel it hangs in.
  */
-function lavaPit(x, top, w) {
+function lavaPool(id, x, top, w, h) {
   return {
-    id: 'hazard_lava',
+    id,
     kind: 'lava',
     accepts: '__lava__',
     hazard: true,
     x: r1(x),
     top: r1(top),
     w: r1(w),
-    bottom: GROUND_Y,
+    bottom: r1(top + h),
     required: 0,
     quota: 0,
     character: null,
@@ -265,7 +265,7 @@ function pinSegment(pin) {
  * nudged further up until it genuinely clears both the gate below and the
  * next gate above.
  */
-function fillTube(rng, path, gate, gateDist, gateAbove, count, type, boreAt) {
+function fillTube(rng, path, gate, gateDist, gateAbove, count, type, boreAt, extraAbove = 0) {
   const r = PAYLOADS[type].radius;
   const rowStep = r * 2 + 9;
   const spacing = r * 2 + 8;
@@ -278,7 +278,7 @@ function fillTube(rng, path, gate, gateDist, gateAbove, count, type, boreAt) {
   const seg = pinSegment(gate);
   const clear = r + gate.thick / 2 + 4;
   const segAbove = gateAbove ? pinSegment(gateAbove) : null;
-  const clearAbove = gateAbove ? r + gateAbove.thick / 2 + 4 : 0;
+  const clearAbove = gateAbove ? r + gateAbove.thick / 2 + 4 + extraAbove : 0;
   const rowAt = (d, n) => {
     const { point, normal } = atDistance(path, d);
     const span = (n - 1) * spacing;
@@ -358,7 +358,7 @@ function shiftBottom(dx, walls, pins, receivers, fromWall, fromPin, fromRecv) {
  * rather than as constants, and the solver rejects any board that does not
  * play, so this can vary without going quietly wrong.
  */
-function bottomCascade(rng, types, channel, pins, receivers, lava) {
+function bottomCascade(rng, types, channel, pins, receivers) {
   const blades = types.length - 1;
   const jit = (base, range) => base + Math.round((rng() - 0.5) * range);
   const cx = W / 2;
@@ -404,18 +404,10 @@ function bottomCascade(rng, types, channel, pins, receivers, lava) {
 
   for (const r of ramps) pins.push(rampPin(r.id, r.x0, r.y0, r.x1, r.y1));
 
-  /*
-   * A pit sits under the end of its ramp, pulled a little further out so the
-   * payload rolls in rather than stalling on the near lip.
-   *
-   * Boards carrying lava run their pits narrower. The trough needs somewhere
-   * to be, and taking the room from the pits is better than shuffling them:
-   * a pit's position is what makes it catch what its blade throws, and moving
-   * one breaks that. A narrower pit still catches; it just forgives less.
-   */
-  const squeeze = lava ? (blades > 1 ? 0.7 : 0.78) : 1;
+  // A pit sits under the end of its ramp, pulled a little further out so the
+  // payload rolls in rather than stalling on the near lip.
   ramps.forEach((r, k) => {
-    const w = Math.round(jit(198, 44) * squeeze);
+    const w = jit(198, 44);
     const x =
       r.dir > 0
         ? Math.min(W - 14 - w / 2, r.x1 + jit(32, 22))
@@ -423,9 +415,7 @@ function bottomCascade(rng, types, channel, pins, receivers, lava) {
     receivers.push(receiver(types[k], x, jit(1016, 48), w, { charSide: x < cx ? -1 : 1 }));
   });
   receivers.push(
-    receiver(types[blades], cx, jit(1042, 14), Math.round(jit(254, 42) * squeeze), {
-      charSide: rng() < 0.5 ? -1 : 1,
-    })
+    receiver(types[blades], cx, jit(1042, 14), jit(254, 42), { charSide: rng() < 0.5 ? -1 : 1 })
   );
 
   // Two pits sharing ground is a real defect however small the overlap: a
@@ -433,37 +423,6 @@ function bottomCascade(rng, types, channel, pins, receivers, lava) {
   // first, so the player can be marked wrong for a throw that was right.
   const spans = receivers.map((r) => [r.x - r.w / 2, r.x + r.w / 2]).sort((a, b) => a[0] - b[0]);
   for (let i = 1; i < spans.length; i++) if (spans[i][0] < spans[i - 1][1]) return null;
-
-  /*
-   * Put the lava in the widest stretch of open ground.
-   *
-   * Beside the pits counts, not just between them — on a two-pit board the
-   * empty half of the floor is the widest space there is, and it is exactly
-   * where a mistimed payload rolls off to. Lava goes there rather than
-   * replacing a pit, because every pit is owed a delivery and taking one away
-   * leaves its stage nowhere to go. The routing does not change; only the
-   * consequence becomes something you watch instead of read in a counter. If
-   * the solver finds a correct play still feeds it, the board is redrawn.
-   */
-  if (lava) {
-    const open = [[0, spans[0][0]]];
-    for (let i = 1; i < spans.length; i++) open.push([spans[i - 1][1], spans[i][0]]);
-    open.push([spans.at(-1)[1], W]);
-
-    const best = open.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a));
-    const room = best[1] - best[0];
-    /*
-     * A trough two payloads wide is enough to swallow one, and that is the bar.
-     * Holding out for a hundred pixels of clear ground only ever found room on
-     * two-pit boards — the pits on a three-pit board sit evenly spread, so the
-     * widest gap is around eighty however hard they are squeezed, and lava
-     * landed on five levels in ninety instead of the intended thirty.
-     */
-    if (room >= 74) {
-      const w = Math.min(room - 12, 250);
-      receivers.push(lavaPit((best[0] + best[1]) / 2, jit(1058, 12), w));
-    }
-  }
 
   return {
     bowlTop: neckTop - jit(132, 28),
@@ -987,12 +946,14 @@ function stackPlan(rng, perPipe, stages) {
  * from each other *and* internally. Every pipe keeps at least one gate — a
  * pipe with none holds no payload and is just scenery.
  */
-function shareGates(rng, pipes, budget, max = 3) {
+function shareGates(rng, pipes, budget, max = 3, reserve = -1) {
   const out = new Array(pipes).fill(1);
   let left = Math.max(0, Math.min(budget, pipes * max) - pipes);
-  while (left > 0 && out.some((n) => n < max)) {
+  // A reserved channel keeps its single gate: it is the furnace, and a bowl of
+  // lava needs the clear run below its one pin.
+  while (left > 0 && out.some((n, i) => i !== reserve && n < max)) {
     const i = Math.floor(rng() * pipes) % pipes;
-    if (out[i] >= max) continue;
+    if (i === reserve || out[i] >= max) continue;
     out[i]++;
     left--;
   }
@@ -1046,7 +1007,10 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
    * they lost that race almost every time — five levels in ninety got it, none
    * past level 36. Pinning it to the level makes every attempt aim for it.
    */
-  const bottom = bottomCascade(rng, pitTypes, channel, pins, receivers, level >= 18 && level % 5 < 2);
+  // Lava is a late-game threat: the machine, the decoys and the blade order all
+  // have to be second nature before a mistake is worth making this loud.
+  const lavaLevel = level >= 55 && level % 5 < 2;
+  const bottom = bottomCascade(rng, pitTypes, channel, pins, receivers);
   if (!bottom) return null; // pits would have overlapped; the caller re-rolls
 
   // Clamp so the outermost pit never leaves the board.
@@ -1089,7 +1053,14 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   // How many gates each pipe carries is settled first, because it decides how
   // much tube that pipe needs: four stacks will not fit in a channel that has
   // been lifted clear of the bowl.
-  const perPipe = shareGates(rng, inletCount, gateCount);
+  /*
+   * On a lava board, hold one channel back to a single gate so it can be the
+   * furnace. Without reserving one, a late board spreads its gates evenly and
+   * a spare single-gate channel almost never exists — three levels in ninety
+   * ended up with lava when the intent was every one of them.
+   */
+  const reserved = lavaLevel && inletCount >= 3 ? Math.floor(rng() * inletCount) % inletCount : -1;
+  const perPipe = shareGates(rng, inletCount, gateCount, 3, reserved);
   const controls = inletControls(inletCount, exitY, rng, shapes.map((s) => s.fn), perPipe);
   // Which stage each group serves. `bottom.order` is the sequence the machine
   // presents its pits in, so a stage index is a position in that sequence.
@@ -1097,7 +1068,33 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   if (!plan) return null;
 
   const traps = pickTraps(rng, plan, level);
-  const trapAt = (pipe, group) => traps.find((t) => t.pipe === pipe && t.group === group);
+
+  /*
+   * On a lava board one channel becomes a furnace: a single pin holding a
+   * tempting group over a bowl of molten rock, with the clear run to the outlet
+   * beneath it. Pull that pin and they drop straight in and burn.
+   *
+   * It has to be a channel with one gate and nothing under it. Slinging a pool
+   * between two gates was the obvious place and does not work: the span between
+   * gates is under a hundred pixels, the stack below has to be held clear of the
+   * pool, and holding it clear leaves it no room to exist at all. The run below
+   * the *lowest* gate is empty by definition, so a bowl hangs there safely.
+   *
+   * The lava is what makes this group unreachable, rather than the stacking
+   * order that makes the other decoys unreachable — so its stage must be served
+   * by some other channel, or that pit would go hungry.
+   */
+  let furnace = -1;
+  if (lavaLevel) {
+    const served = [];
+    for (const stages of plan) for (const st of stages) served[st] = (served[st] || 0) + 1;
+    const usable = (i) => perPipe[i] === 1 && (served[plan[i][0]] || 0) >= 2;
+    furnace = reserved >= 0 && usable(reserved) ? reserved : perPipe.findIndex((n, i) => usable(i));
+  }
+
+  const trapAt = (pipe, group) =>
+    traps.find((t) => t.pipe === pipe && t.group === group) ||
+    (pipe === furnace && group === 0 ? { pipe, group, stage: plan[pipe][0], furnace: true } : null);
 
   // Each inlet: a curved tube, its gates, and a payload group behind each gate.
   const gatesByStage = bottom.order.map(() => []);
@@ -1119,6 +1116,14 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
     );
     pins.push(...gates);
 
+    if (i === furnace) {
+      // Midway down the empty run between the pin and the outlet.
+      const at = atDistance(built.path, len * (fractions[0] + (1 - fractions[0]) * 0.45));
+      receivers.push(
+        lavaPool(`lava_${i}`, at.point[0], at.point[1] - 26, boreAt(fractions[0]) * 0.9, 52)
+      );
+    }
+
     gates.forEach((gate, gi) => {
       const trap = trapAt(i, gi);
       const stage = trap ? trap.stage : plan[i][gi];
@@ -1126,7 +1131,7 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
       // couple stranded up high", which is the thing to notice; a full-size
       // group would put more of that item out of reach than in reach and the
       // board would look like junk rather than a puzzle with a trap in it.
-      const size = trap ? irange(rng, 1, 2) : groupSize(rng, level, perPipe[i]);
+      const size = trap ? (trap.furnace ? irange(rng, 2, 3) : irange(rng, 1, 2)) : groupSize(rng, level, perPipe[i]);
       const group = fillTube(rng, built.path, gate, len * fractions[gi], gates[gi + 1] || null,
         size, bottom.order[stage], boreAt);
       if (trap) {

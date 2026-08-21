@@ -45,12 +45,17 @@ export default class Receiver {
     const halfW = this.w / 2;
     const h = this.h;
 
+    // A hazard destroys on contact, so it needs no walls to hold anything —
+    // and a lava pool sitting inside a glass channel must not have a floor, or
+    // it plugs the bore it is supposed to be a danger in.
     const opts = { isStatic: true, friction: 0.2, restitution: 0.02, label: 'wall' };
-    this.walls = [
-      matter.add.rectangle(this.x - halfW - WALL_T / 2, this.top + h / 2, WALL_T, h, opts),
-      matter.add.rectangle(this.x + halfW + WALL_T / 2, this.top + h / 2, WALL_T, h, opts),
-      matter.add.rectangle(this.x, this.bottom + WALL_T / 2, this.w + WALL_T * 2, WALL_T, opts),
-    ];
+    this.walls = this.hazard
+      ? []
+      : [
+          matter.add.rectangle(this.x - halfW - WALL_T / 2, this.top + h / 2, WALL_T, h, opts),
+          matter.add.rectangle(this.x + halfW + WALL_T / 2, this.top + h / 2, WALL_T, h, opts),
+          matter.add.rectangle(this.x, this.bottom + WALL_T / 2, this.w + WALL_T * 2, WALL_T, opts),
+        ];
 
     // Sensor sits just inside the mouth so it fires before anything lands.
     const sensorH = Math.min(74, h - 10);
@@ -215,6 +220,9 @@ export default class Receiver {
 
   _drawLava(back, front) {
     const s = this.style;
+    // Lava inside a channel is a pool suspended in the glass, not a pit in the
+    // ground: no rock tub around it, just molten material filling the bore.
+    if (this.hazard) return this._drawMoltenPool(back);
     this._tub(back, s.rock, s.rockHi, 12);
 
     const cx = this.x;
@@ -237,6 +245,26 @@ export default class Receiver {
   }
 
   /* --------------------------- ambient effects ------------------------ */
+
+  /** A glowing pool of lava filling a section of a glass channel. */
+  _drawMoltenPool(g) {
+    const s = this.style;
+    const x = this.x - this.w / 2;
+    const h = this.h;
+
+    g.fillStyle(0xff7a2f, 0.22);
+    g.fillRoundedRect(x - 8, this.top - 8, this.w + 16, h + 16, 14);
+    g.fillStyle(s.lava, 0.92);
+    g.fillRoundedRect(x, this.top, this.w, h, 10);
+    g.fillStyle(0xffc46b, 0.85);
+    g.fillRoundedRect(x + 5, this.top + 4, this.w - 10, Math.max(6, h * 0.24), 6);
+    // A darker crust across the surface so it reads as molten, not as paint.
+    g.fillStyle(0x8a2408, 0.5);
+    for (let i = 0; i < 4; i++) {
+      const cw = this.w * (0.16 + ((i * 7) % 5) / 22);
+      g.fillEllipse(x + 14 + ((i * 37) % Math.max(1, this.w - 28)), this.top + h * 0.55, cw, 7);
+    }
+  }
 
   _buildIdleFx() {
     const cx = this.x;
