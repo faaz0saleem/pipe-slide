@@ -215,6 +215,31 @@ for (const l of nonBonus) {
 }
 console.log(`distinct bottom machines   ${machines.size}/${nonBonus.length} levels`);
 
+/* --- and what the blades themselves are --------------------------------
+ * Position and angle vary freely, so the check above passes on jitter alone.
+ * What a player actually registers is the *shape* of the plates they spend the
+ * level pulling, so count the builds: how many of the catalogue turn up, how
+ * often each is used, and whether two neighbouring levels ever share a set. */
+const shapeUse = {};
+let neckUse = {};
+const bladeSets = [];
+for (const l of nonBonus) {
+  const [neck, ...rest] = (l.machine || '?:?').split(':');
+  neckUse[neck] = (neckUse[neck] || 0) + 1;
+  const set = rest.join(':').replace(/[RL]/g, '');
+  bladeSets.push({ id: l.id, set });
+  for (const shape of set.split('+')) shapeUse[shape] = (shapeUse[shape] || 0) + 1;
+}
+const bladeTwins = bladeSets
+  .filter((b, i) => i && b.set === bladeSets[i - 1].set)
+  .map((b) => b.id);
+console.log(`blade shapes in use       `, shapeUse);
+console.log(`neck builds in use        `, neckUse);
+console.log(
+  `neighbours sharing blades  ${bladeTwins.length}` +
+    (bladeTwins.length ? '  ' + bladeTwins.slice(0, 10).join(' ') : '')
+);
+
 /* --- gates per pipe: do the channels on one board differ? -------------- */
 let evenBoards = 0;
 let pipeBoards = 0;

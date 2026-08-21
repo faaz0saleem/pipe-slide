@@ -1,13 +1,32 @@
 /**
- * Themed backdrop: gradient sky, a soft light behind the pipes, two layers of
- * parallax silhouettes and drifting motes. Every chapter gets its own palette
- * and silhouette shape, so the game visibly changes as the player climbs.
+ * Themed backdrop: gradient sky, light shafts, a soft glow behind the pipes,
+ * three layers of parallax silhouettes and drifting motes. Every chapter gets
+ * its own palette and silhouette shape, so the game visibly changes as the
+ * player climbs.
+ *
+ * The silhouettes are laid out from a seed rather than from a fixed pattern.
+ * Ten levels share a chapter, and with a fixed pattern they shared the exact
+ * same skyline too — the same four peaks, the same lit windows — which made
+ * the backdrop the most obviously repeated thing on screen after the machine
+ * at the bottom. Seeding it by level id costs nothing and gives every board
+ * its own horizon.
  */
 
 import Phaser from 'phaser';
 import { WIDTH, HEIGHT, GROUND_Y, DEPTH } from '../config/GameConfig.js';
 import { CHAPTER_THEMES, mix } from '../config/Palette.js';
 import { ensureBackdrop } from '../core/Art.js';
+
+/** A small deterministic rng, so a level's horizon is the same every visit. */
+function seeded(seed) {
+  let a = (seed * 0x9e3779b1) | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 export default class Backdrop {
   /**
@@ -19,6 +38,7 @@ export default class Backdrop {
     this.scene = scene;
     this.theme = CHAPTER_THEMES[themeKey] || CHAPTER_THEMES.mine;
     this.layers = [];
+    this.rnd = seeded(opts.seed ?? 1);
 
     const w = scene.scale.width || WIDTH;
     const h = scene.scale.height || HEIGHT;
@@ -27,6 +47,7 @@ export default class Backdrop {
 
     this._sky(themeKey, w, h);
     this._glow(w, h);
+    if (opts.parallax !== false) this._shafts(w, h);
     if (opts.parallax !== false) this._ridges(w, h);
     if (opts.ground !== false) this._ground(w, h);
     if (opts.motes !== false) this._motes(w, h);
@@ -79,16 +100,50 @@ export default class Backdrop {
     };
     const draw = shapes[this.theme.shape] || shapes.rock;
 
+    // Three bands rather than two. The extra one sits highest and palest, and
+    // it is what turns a flat backing card into distance: the eye reads two
+    // shapes as a foreground and a background, and three as depth.
+    const haze = this.scene.add.graphics().setDepth(DEPTH.parallax - 1);
+    draw(haze, h * 0.52, mix(this.theme.ridge[0], this.theme.sky[0], 0.55), 0.5, 0.78);
     const far = this.scene.add.graphics().setDepth(DEPTH.parallax);
     draw(far, h * 0.62, this.theme.ridge[0], 0.55, 1.0);
     const near = this.scene.add.graphics().setDepth(DEPTH.parallax + 1);
     draw(near, h * 0.74, this.theme.ridge[1], 0.8, 1.35);
 
-    this.layers.push(far, near);
+    this.layers.push(haze, far, near);
     this.parallax = [
+      { obj: haze, factor: 0.008 },
       { obj: far, factor: 0.02 },
       { obj: near, factor: 0.045 },
     ];
+  }
+
+  /**
+   * Shafts of light raking down across the board.
+   *
+   * Additive, low alpha and skewed off vertical, so they read as light coming
+   * through something rather than as bars. They sit behind the pipes, which is
+   * what makes the glass look lit from behind instead of pasted on.
+   */
+  _shafts(w, h) {
+    const g = this.scene.add.graphics().setDepth(DEPTH.bg + 2);
+    g.setBlendMode(Phaser.BlendModes.ADD);
+    const lean = 0.22 + this.rnd() * 0.2;
+    for (let i = 0; i < 4; i++) {
+      const x = this.rnd() * (w + 260) - 130;
+      const width = 46 + this.rnd() * 90;
+      g.fillStyle(this.theme.glow, 0.05 + this.rnd() * 0.035);
+      g.fillPoints(
+        [
+          { x, y: -20 },
+          { x: x + width, y: -20 },
+          { x: x + width + h * lean, y: h * 0.86 },
+          { x: x + h * lean, y: h * 0.86 },
+        ],
+        true
+      );
+    }
+    this.layers.push(g);
   }
 
   _jagged(g, baseY, color, alpha, scale, teeth, height) {
@@ -96,12 +151,13 @@ export default class Backdrop {
     g.beginPath();
     g.moveTo(-40, this.h);
     g.lineTo(-40, baseY);
-    const step = (this.w + 80) / teeth;
-    for (let i = 0; i <= teeth; i++) {
+    const n = teeth + Math.floor(this.rnd() * 3) - 1;
+    const step = (this.w + 80) / n;
+    for (let i = 0; i <= n; i++) {
       const x = -40 + i * step;
-      const peak = baseY - (i % 2 === 0 ? height : height * 0.55) * scale * (0.7 + ((i * 13) % 7) / 12);
+      const peak = baseY - height * scale * (0.42 + this.rnd() * 0.7);
       g.lineTo(x, peak);
-      g.lineTo(x + step / 2, baseY - 10);
+      g.lineTo(x + step * (0.35 + this.rnd() * 0.3), baseY - 10);
     }
     g.lineTo(this.w + 40, this.h);
     g.closePath();
@@ -113,11 +169,11 @@ export default class Backdrop {
     g.beginPath();
     g.moveTo(-40, this.h);
     g.lineTo(-40, baseY);
-    const bumps = 4;
+    const bumps = 3 + Math.floor(this.rnd() * 3);
     const step = (this.w + 80) / bumps;
     for (let i = 0; i < bumps; i++) {
       const x = -40 + i * step;
-      g.arc(x + step / 2, baseY, (step / 2) * scale * 0.62, Math.PI, 0);
+      g.arc(x + step / 2, baseY, (step / 2) * scale * (0.44 + this.rnd() * 0.34), Math.PI, 0);
       g.lineTo(x + step, baseY);
     }
     g.lineTo(this.w + 40, this.h);
@@ -128,16 +184,14 @@ export default class Backdrop {
   _gears(g, baseY, color, alpha, scale) {
     g.fillStyle(color, alpha);
     g.fillRect(-40, baseY, this.w + 80, this.h - baseY);
-    const cogs = [
-      [90, baseY - 40, 78],
-      [300, baseY - 78, 110],
-      [560, baseY - 30, 88],
-      [680, baseY - 96, 62],
-    ];
+    const cogs = [];
+    for (let x = 60; x < this.w + 60; x += 130 + this.rnd() * 90) {
+      cogs.push([x, baseY - 20 - this.rnd() * 90, 58 + this.rnd() * 60]);
+    }
     for (const [cx, cy, r0] of cogs) {
       const r = r0 * scale * 0.7;
       g.fillCircle(cx, cy, r);
-      const teeth = 10;
+      const teeth = 8 + Math.floor(this.rnd() * 5);
       for (let i = 0; i < teeth; i++) {
         const a = (i / teeth) * Math.PI * 2;
         g.fillRect(
@@ -153,21 +207,19 @@ export default class Backdrop {
   _city(g, baseY, color, alpha, scale) {
     g.fillStyle(color, alpha);
     let x = -40;
-    let i = 0;
     while (x < this.w + 40) {
-      const w = 46 + ((i * 37) % 60);
-      const h = (90 + ((i * 53) % 200)) * scale * 0.8;
+      const w = 46 + this.rnd() * 62;
+      const h = (80 + this.rnd() * 210) * scale * 0.8;
       g.fillRect(x, baseY - h, w, this.h - baseY + h);
       // Lit windows.
       g.fillStyle(mix(color, 0xffffff, 0.5), alpha * 0.5);
       for (let wy = baseY - h + 14; wy < baseY - 12; wy += 26) {
         for (let wx = x + 8; wx < x + w - 12; wx += 20) {
-          if ((wx + wy) % 3 === 0) g.fillRect(wx, wy, 8, 12);
+          if (this.rnd() < 0.36) g.fillRect(wx, wy, 8, 12);
         }
       }
       g.fillStyle(color, alpha);
-      x += w + 12;
-      i++;
+      x += w + 8 + this.rnd() * 12;
     }
   }
 
@@ -201,10 +253,10 @@ export default class Backdrop {
 
     // Scattered pebbles so the floor is not a flat band.
     g.fillStyle(mix(this.theme.ridge[0], 0x000000, 0.15), 0.9);
-    for (let i = 0; i < 26; i++) {
-      const x = ((i * 149) % w) + 6;
-      const y = top + 18 + ((i * 61) % Math.max(20, h - top - 26));
-      g.fillEllipse(x, y, 10 + ((i * 7) % 14), 6 + ((i * 5) % 6));
+    for (let i = 0; i < 30; i++) {
+      const x = this.rnd() * w;
+      const y = top + 16 + this.rnd() * Math.max(20, h - top - 26);
+      g.fillEllipse(x, y, 8 + this.rnd() * 16, 5 + this.rnd() * 7);
     }
 
     this.layers.push(g);

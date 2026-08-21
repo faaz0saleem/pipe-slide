@@ -65,20 +65,19 @@ for (const levelId of [1, 8, 17, 25, 30, 38, 44, 55, 60, 68, 77, 84, 90, 95, 99]
   );
   await page.waitForTimeout(1200);
 
+  // Ask each pin where its ring actually is rather than re-deriving it from
+  // the chord. A blade with a hooked tip puts its handle somewhere the chord
+  // does not point, and a test that recomputes the old way would aim at empty
+  // space and report the pin unreachable when it is not.
   const pins = await page.evaluate(() =>
     window.game.scene.getScene('Game').pins.map((p) => ({
-      id: p.def.id, x: p.def.x, y: p.def.y, len: p.def.len, thick: p.def.thick,
-      angle: p.def.angle, knob: p.knobSide,
+      id: p.def.id, ring: p.ring,
     }))
   );
 
   for (let i = 0; i < pins.length; i++) {
     const d = pins[i];
-    const a = (d.angle * Math.PI) / 180;
-    // Grab at the ring: the part of the rod a player actually reaches for.
-    const rr = d.thick * 1.05;
-    const gx = d.x + Math.cos(a) * d.knob * (d.len / 2 + rr * 0.9);
-    const gy = d.y + Math.sin(a) * d.knob * (d.len / 2 + rr * 0.9);
+    const [gx, gy] = d.ring;
     const p = toPage(gx, gy);
 
     await page.mouse.move(p.x, p.y);

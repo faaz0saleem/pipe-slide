@@ -101,6 +101,38 @@ export const CHAPTER_THEMES = {
   },
 };
 
+/**
+ * The finish on the hardware, per chapter.
+ *
+ * Every rod and every blade in the game used to be the same three greys, so a
+ * board in the neon refinery held the same ironmongery as one in the orchard.
+ * A chapter's pins are now made of something that belongs to it: pitted iron
+ * down the mine, brass in the clockwork vault, chrome up at the sky docks.
+ *
+ * `trim` is the accent that marks the working parts — the chevrons on a blade
+ * and the collar on a gate — and is deliberately the chapter's own accent, so
+ * the hardware ties back to the backdrop behind it.
+ *
+ * Every `base` is darker than the sky it will sit against, deliberately. The
+ * first cut of this table matched each chapter's own brightness, which made
+ * frost hardware white-on-white and orchard hardware green-on-green: the pins
+ * are the one thing on the board a player has to find and hit, so they carry
+ * the value contrast and `light` is spent on a thin lit edge, not on the
+ * whole shaft.
+ */
+export const PIN_METAL = {
+  mine: { dark: 0x1e2430, base: 0x5a6478, light: 0xc9d6ee, trim: 0xffb547 },
+  orchard: { dark: 0x163327, base: 0x3f7a5c, light: 0xbff0d4, trim: 0x8ef0a0 },
+  crystal: { dark: 0x241a44, base: 0x5a4a9c, light: 0xd9c9ff, trim: 0xd0a2ff },
+  foundry: { dark: 0x351709, base: 0x8a4f2a, light: 0xffc79a, trim: 0xff9a4d },
+  sky: { dark: 0x143349, base: 0x3f7ba8, light: 0xdff3ff, trim: 0x7fd8ff },
+  frost: { dark: 0x14313f, base: 0x3d7690, light: 0xe4feff, trim: 0xc4f2ff },
+  neon: { dark: 0x220a3c, base: 0x6a3a9c, light: 0xffc4ff, trim: 0x4cf9ff },
+  lava: { dark: 0x2a0f08, base: 0x74381f, light: 0xffb98f, trim: 0xff7a45 },
+  clockwork: { dark: 0x33220c, base: 0x936c2c, light: 0xffe0a0, trim: 0xf0c674 },
+  aurora: { dark: 0x11253a, base: 0x3c6a96, light: 0xdcf0ff, trim: 0x9df7ff },
+};
+
 /** Payload look-up: body colours plus the UI icon tint. */
 export const PAYLOAD_STYLE = {
   coal: { base: 0x2f3138, hi: 0x6a6f7d, spark: 0xffb457, label: 'Coal', icon: 0x4b515e },

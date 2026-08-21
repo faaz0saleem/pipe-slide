@@ -64,6 +64,15 @@ const shot = async (name, setup, settleSteps=0) => {
     polling: 250,
   });
   await page.waitForTimeout(1500);
+  // Clear the level-intro banner. It is on a wall-clock tween that expires in
+  // two seconds of play, but this renderer draws at a couple of frames a
+  // second, so it is still sitting across the middle of the board when the
+  // capture lands — and the board is the thing being reviewed.
+  await page.evaluate(() => {
+    const gs = window.game?.scene?.getScene('Game');
+    if (!gs) return;
+    gs.children.list.filter((c) => c.depth === 70).forEach((c) => c.destroy());
+  });
   if (settleSteps) {
     await page.evaluate((n)=>{ const gs=window.game.scene.getScene('Game');
       if (!gs || !gs.matter || !gs.matter.world) return;
@@ -76,12 +85,19 @@ const shot = async (name, setup, settleSteps=0) => {
 
 
 // Two, three and four pipes across the difficulty range. No bonus rounds:
-// see the note in shot() — they cannot be captured here.
-for (const id of [4, 12, 25, 44, 55, 76, 99]) {
+// see the note in shot() — they cannot be captured here. `SHOTS=4,12` narrows
+// it to whichever levels are actually under review, which matters when each
+// capture costs a page reload.
+const WANTED = (process.env.SHOTS || '4,12,25,44,55,76,99').split(',').map(Number);
+for (const id of WANTED) {
   await shot(`level-${id}`, (lv)=>{ const g=window.game;
     g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Game',{levelId:lv}); }, 90);
 }
-if (0) await shot('map', ()=>{ const g=window.game; g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Map',{focus:1}); });
-if (0) await shot('shop', ()=>{ const g=window.game; g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Shop',{from:'Menu'}); });
+// The menus render fine here, unlike a bonus round, but they are not usually
+// what is under review — so they are opt-in: `SCENES=menu,map,shop`.
+const SCENES = (process.env.SCENES || '').split(',').filter(Boolean);
+if (SCENES.includes('menu')) await shot('menu', ()=>{ const g=window.game; g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Menu'); });
+if (SCENES.includes('map')) await shot('map', ()=>{ const g=window.game; g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Map',{focus:1}); });
+if (SCENES.includes('shop')) await shot('shop', ()=>{ const g=window.game; g.scene.getScenes(true).forEach(s=>s.scene.stop()); g.scene.start('Shop',{from:'Menu'}); });
 
 await browser.close(); server.close(); process.exit(0);

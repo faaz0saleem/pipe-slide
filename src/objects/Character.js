@@ -16,12 +16,19 @@ const SKIN = [0xf3c9a0, 0xe0a878, 0xc98c5e, 0xa96e46, 0x7d4f30];
 
 const SAD_LINES = ['Oh no!', 'Not again…', 'That was mine!', 'Aww…'];
 
-/** Per-kind flavour: skin pick, accent and the idle mood. */
+/**
+ * Per-kind flavour: skin pick, accent, the idle mood, and hair.
+ *
+ * Four bald identical heads is what three pits at the bottom of a board used
+ * to look like — the customers were told apart only by which pit they stood
+ * beside. Hair is the cheapest way to make them four people: a style and a
+ * colour each, drawn under whatever hat the player has equipped.
+ */
 const KINDS = {
-  shiverer: { mood: 'cold', accent: 0x9fd8ff, skin: 0 },
-  hungry: { mood: 'hungry', accent: 0xffc98a, skin: 2 },
-  jeweler: { mood: 'wow', accent: 0xd0a2ff, skin: 1 },
-  merchant: { mood: 'wow', accent: 0xffd54a, skin: 3 },
+  shiverer: { mood: 'cold', accent: 0x9fd8ff, skin: 0, hair: { style: 'short', tint: 0x5b4636 } },
+  hungry: { mood: 'hungry', accent: 0xffc98a, skin: 2, hair: { style: 'curly', tint: 0x2d2118 } },
+  jeweler: { mood: 'wow', accent: 0xd0a2ff, skin: 1, hair: { style: 'bun', tint: 0x8c3f2a } },
+  merchant: { mood: 'wow', accent: 0xffd54a, skin: 3, hair: { style: 'tuft', tint: 0x3a3a44 } },
 };
 
 export default class Character {
@@ -119,6 +126,10 @@ export default class Character {
 
     this.head.add([face, this.blushGfx, this.eyes, this.mouth]);
 
+    this.hairGfx = scene.add.graphics();
+    this.head.add(this.hairGfx);
+    this._drawHair();
+
     this.hatGfx = scene.add.graphics();
     this.head.add(this.hatGfx);
     this._drawHat();
@@ -188,6 +199,69 @@ export default class Character {
       this.blushGfx.fillEllipse(-25, 10, 17, 10);
       this.blushGfx.fillEllipse(25, 10, 17, 10);
     }
+  }
+
+  /** Hair, drawn on the head and under any hat. */
+  _drawHair() {
+    const g = this.hairGfx;
+    g.clear();
+    const hair = this.spec.hair;
+    if (!hair) return;
+    const tint = hair.tint;
+    const shade = mix(tint, 0x000000, 0.3);
+    const shine = mix(tint, 0xffffff, 0.28);
+
+    /*
+     * The cap every style shares.
+     *
+     * One closed path: over the crown, then back across a hairline that dips
+     * to a peak in the middle. A plain half-disc was the obvious way to draw
+     * it and the wrong one — the head is a circle of the same radius, so half
+     * of it lands across the eyes and every customer looks like they are
+     * wearing sunglasses.
+     */
+    g.fillStyle(tint, 1);
+    g.beginPath();
+    g.arc(0, -4, 35, Math.PI * 1.02, Math.PI * 1.98, false);
+    g.lineTo(26, -19);
+    g.lineTo(10, -25);
+    g.lineTo(-6, -21);
+    g.lineTo(-26, -19);
+    g.closePath();
+    g.fillPath();
+
+    // Sideburns down past the ear.
+    g.fillStyle(shade, 1);
+    g.fillEllipse(-31, -7, 10, 18);
+    g.fillEllipse(31, -7, 10, 18);
+
+    switch (hair.style) {
+      case 'curly':
+        g.fillStyle(tint, 1);
+        for (let i = 0; i < 7; i++) {
+          const a = Math.PI * (1.06 + (i / 6) * 0.88);
+          g.fillCircle(Math.cos(a) * 31, Math.sin(a) * 31 - 6, 11);
+        }
+        break;
+      case 'bun':
+        g.fillStyle(shade, 1);
+        g.fillCircle(0, -44, 15);
+        g.fillStyle(tint, 1);
+        g.fillCircle(0, -46, 13);
+        break;
+      case 'tuft':
+        g.fillStyle(tint, 1);
+        g.fillTriangle(-4, -34, 12, -52, 15, -30);
+        break;
+      default:
+        // 'short' — a side parting, nothing more.
+        g.fillStyle(shade, 1);
+        g.fillEllipse(-11, -27, 26, 10);
+        break;
+    }
+
+    g.fillStyle(shine, 0.5);
+    g.fillEllipse(-14, -26, 18, 6);
   }
 
   _drawHat() {

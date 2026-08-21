@@ -182,21 +182,30 @@ export default class PipeSystem {
       const { left, right } = tube;
 
       // The bore: a pane of tinted glass you can still read the level through.
-      this._fillChannel(g, left, right, 0xcfeeff, 0.17);
-      this._fillChannel(g, left, right, glowColor, 0.07);
+      this._fillChannel(g, left, right, 0x9fd8f2, 0.13);
+      this._fillChannel(g, left, right, glowColor, 0.08);
       this._glassInterior(g, left, right);
 
-      // Thin bright rims, the way real glassware reads — not fat bars.
       const edges = [left, right];
       // A capped channel is a sealed vessel: bridge the two walls across the
       // top so the reservoir closes instead of ending in mid-air. Bowls stay
       // open, because everything above them pours in through the mouth.
       if (tube.cap) edges.push([left[0], right[0]]);
       for (const side of edges) {
-        this._fillStroke(glow, side, 18, glowColor, 0.14);
-        this._fillStroke(g, side, 10, 0xdff6ff, 0.22);
+        this._fillStroke(glow, side, 20, glowColor, 0.15);
+        /*
+         * A dark contour under every rim.
+         *
+         * Without it the glass is drawn entirely in colours lighter than the
+         * sky behind it, so the tube has no outside edge and reads as a smear
+         * of light rather than as an object. One dark band beneath the bright
+         * ones is what gives it a silhouette — and it is what lets the rims
+         * themselves stay thin, the way real glassware looks.
+         */
+        this._fillStroke(g, side, 13, 0x0a1626, 0.34);
+        this._fillStroke(g, side, 9, 0xdff6ff, 0.2);
         this._fillStroke(g, side, 4.5, stroke, 0.95);
-        this._fillStroke(g, side, 1.5, 0xffffff, 0.7);
+        this._fillStroke(g, side, 1.5, 0xffffff, 0.75);
       }
 
       // A tint of the skin's rim colour along the near wall, so a gold or neon
@@ -257,10 +266,40 @@ export default class PipeSystem {
    */
   _glassInterior(g, left, right) {
     // Shading against the far wall first, so the highlights sit on top of it.
-    this._fillStroke(g, this._alongBore(left, right, 0.87), 13, 0x0b1a2c, 0.13);
+    this._fillStroke(g, this._alongBore(left, right, 0.88), 15, 0x0b1a2c, 0.2);
+    // A little bounce light off the far wall's inner face, just inside it.
+    this._fillStroke(g, this._alongBore(left, right, 0.74), 4, 0x9fe8ff, 0.12);
 
-    this._fillStroke(g, this._alongBore(left, right, 0.2), 7, 0xffffff, 0.16);
-    this._fillStroke(g, this._alongBore(left, right, 0.12), 2.5, 0xffffff, 0.34);
+    this._fillStroke(g, this._alongBore(left, right, 0.2), 7, 0xffffff, 0.17);
+    this._fillStroke(g, this._alongBore(left, right, 0.12), 2.5, 0xffffff, 0.38);
+    // A second, dimmer streak further round the bore: two highlights are what
+    // separate a cylinder from a flat pane with a stripe painted on it.
+    this._fillStroke(g, this._alongBore(left, right, 0.52), 3, 0xffffff, 0.1);
+
+    this._mouldingRings(g, left, right);
+  }
+
+  /**
+   * Faint rings across the bore, the way moulded glassware is ribbed.
+   *
+   * Spaced along the polyline rather than by distance, which is the useful
+   * behaviour here: the wall points bunch up where a vessel bulges and spread
+   * out where it narrows, so the rings crowd around the shoulders and thin out
+   * down the spout — exactly where the eye expects a moulded tube to show its
+   * form.
+   */
+  _mouldingRings(g, left, right) {
+    const n = Math.min(left.length, right.length);
+    const every = 8;
+    g.lineStyle(2, 0xffffff, 0.11);
+    for (let i = every; i < n - every; i += every) {
+      const [lx, ly] = left[i];
+      const [rx, ry] = right[i];
+      g.beginPath();
+      g.moveTo(lx + (rx - lx) * 0.16, ly + (ry - ly) * 0.16);
+      g.lineTo(lx + (rx - lx) * 0.62, ly + (ry - ly) * 0.62);
+      g.strokePath();
+    }
   }
 
   _rainbow(offset) {

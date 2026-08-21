@@ -44,7 +44,13 @@ function channel(t) {
   return `<polygon points="${ring.map(pt).join(' ')}" class="bore"/>${rims.join('')}`;
 }
 
-/** A rod with its ring handle, so gate placement is reviewable at a glance. */
+/**
+ * A rod with its ring handle, so gate placement is reviewable at a glance.
+ *
+ * A blade carries a spine and is stroked along it — the whole point of this
+ * plate is to be able to see, across ninety levels at once, that the machine
+ * at the bottom is a different shape every time.
+ */
 function pin(p) {
   const a = (p.angle * Math.PI) / 180;
   const cos = Math.cos(a);
@@ -54,12 +60,18 @@ function pin(p) {
   const r = p.thick * 1.05;
   const side = Math.sign(p.out[0] * cos + p.out[1] * sin) || 1;
   const reach = side * (p.len / 2 + r * 0.9);
+  const ramp = p.kind === 'ramp' ? ' ramp' : '';
+  const body =
+    p.spine && p.spine.length > 1
+      ? `<polyline points="${p.spine.map(pt).join(' ')}" class="rod${ramp}" ` +
+        `stroke-width="${p.thick}" fill="none"/>`
+      : `<line x1="${(p.x - hx).toFixed(1)}" y1="${(p.y - hy).toFixed(1)}" ` +
+        `x2="${(p.x + hx).toFixed(1)}" y2="${(p.y + hy).toFixed(1)}" ` +
+        `class="rod${ramp}" stroke-width="${p.thick}"/>`;
   return (
-    `<line x1="${(p.x - hx).toFixed(1)}" y1="${(p.y - hy).toFixed(1)}" ` +
-    `x2="${(p.x + hx).toFixed(1)}" y2="${(p.y + hy).toFixed(1)}" ` +
-    `class="rod${p.kind === 'ramp' ? ' ramp' : ''}" stroke-width="${p.thick}"/>` +
+    body +
     `<circle cx="${(p.x + cos * reach).toFixed(1)}" cy="${(p.y + sin * reach).toFixed(1)}" ` +
-    `r="${r.toFixed(1)}" class="ring${p.kind === 'ramp' ? ' ramp' : ''}"/>`
+    `r="${r.toFixed(1)}" class="ring${ramp}"/>`
   );
 }
 
@@ -300,7 +312,7 @@ const html = `<title>Pipe Slide Level Sheet</title>
   .peg { fill: none; stroke: var(--glass); stroke-width: 4; }
   .pit { fill: none; stroke-width: 7; opacity: .5; }
   .lava { fill: #e2571f; opacity: .45; stroke: #b03a10; stroke-width: 6; }
-  .rod { stroke: var(--rod); stroke-linecap: round; }
+  .rod { stroke: var(--rod); stroke-linecap: round; stroke-linejoin: round; fill: none; }
   .rod.ramp { stroke: var(--ramp); }
   .ring { fill: none; stroke: var(--rod); stroke-width: 6; }
   .ring.ramp { stroke: var(--ramp); }

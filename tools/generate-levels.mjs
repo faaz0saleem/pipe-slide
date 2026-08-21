@@ -23,7 +23,16 @@ import { vesselProfiled, PROFILES, smoothPath, pathLength, atDistance, r1 } from
 import { simulateLevel } from './solver.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const OUT = resolve(__dirname, '../public/levels/levels.json');
+/*
+ * A full book is a hundred levels, each played by the solver on every attempt,
+ * which is twenty minutes of CPU — too slow a loop to develop the generator
+ * against. `LEVELS=12 OUT=/tmp/probe.json npm run levels` builds a prefix into
+ * a throwaway file instead, and the build still runs the real thing.
+ */
+const COUNT = Math.max(1, Math.min(100, Number(process.env.LEVELS) || 100));
+const OUT = process.env.OUT
+  ? resolve(process.cwd(), process.env.OUT)
+  : resolve(__dirname, '../public/levels/levels.json');
 
 /* ------------------------------------------------------------------ */
 /* World constants (must match src/config/GameConfig.js)               */
@@ -150,19 +159,112 @@ function gatePin(id, x, y, len, opts = {}) {
   };
 }
 
+/**
+ * Blade shapes — the run a diverter takes between the neck and its pit.
+ *
+ * Every one of these starts at the same high end against the neck edge and
+ * finishes at the same low end over the pit, because that pairing is what the
+ * machine's routing means and the player has to be able to read it. What is
+ * free is the run in between, and it is not only decoration: a `bow` lets the
+ * flow build speed early and coast off the end, a `crest` holds it back and
+ * then throws it, a `rib` trips it halfway so it arrives in a dribble instead
+ * of a rush, a `flare` lands it flat.
+ *
+ * The name travels into the level file and into the play signature, because
+ * two boards whose blades differ are two different machines to operate — and
+ * that is precisely the question the uniqueness check is asking.
+ *
+ * Each returns a spine: a polyline the physics follows segment by segment,
+ * exactly the way a pipe wall does.
+ *
+ * @param {number[]} a high end, at the neck
+ * @param {number[]} b low end, over the pit
+ * @param {number} dir +1 when the blade throws right
+ */
+const BLADES = {
+  /** A plain plank. The baseline every other shape is a departure from. */
+  straight: (a, b) => [a, b],
+
+  /** Drops early and runs out flat, so the payload lands rather than flies. */
+  flare: (a, b) => [
+    a,
+    [lerpN(a[0], b[0], 0.62), lerpN(a[1], b[1], 0.93)],
+    [b[0], lerpN(a[1], b[1], 0.99)],
+  ],
+
+  /** A hard knee: shallow, then steep. The flow dawdles and then drops away. */
+  step: (a, b) => [a, [lerpN(a[0], b[0], 0.56), lerpN(a[1], b[1], 0.26)], b],
+
+  /** Concave — steep first, shedding speed before the pit. */
+  bow: (a, b) => arcSpine(a, b, 0.62),
+
+  /** Convex — held back at the top, then thrown off a steepening tail. */
+  crest: (a, b) => arcSpine(a, b, 1.7),
+
+  /** A speed bump at midspan that breaks the flow into a trickle. */
+  rib: (a, b) => {
+    const m = lerp2(a, b, 0.5);
+    const step = (b[1] - a[1]) * 0.11;
+    return [a, lerp2(a, b, 0.42), [m[0], m[1] - step], lerp2(a, b, 0.58), b];
+  },
+
+  /** An upturned tip that kicks the payload out towards the far lip. */
+  lip: (a, b, dir) => [a, b, [b[0] + dir * 26, b[1] - 14]],
+};
+
+const lerpN = (p, q, t) => p + (q - p) * t;
+const lerp2 = (a, b, t) => [lerpN(a[0], b[0], t), lerpN(a[1], b[1], t)];
+
+/**
+ * Three interior points on a power curve between the two ends.
+ *
+ * `k` below 1 drops the run early and flattens it late; above 1 does the
+ * reverse. Sampled rather than splined because the physics walks the spine
+ * segment by segment anyway, and four short segments read as a curve.
+ */
+function arcSpine(a, b, k) {
+  const out = [a];
+  for (const t of [0.3, 0.55, 0.78]) {
+    out.push([lerpN(a[0], b[0], t), lerpN(a[1], b[1], Math.pow(t, k))]);
+  }
+  out.push(b);
+  return out;
+}
+
+/**
+ * A diverter blade, laid out along one of the shapes above.
+ *
+ * `x`/`y`/`angle`/`len` describe the chord, which is what everything
+ * downstream reasons about: where the ring handle sits, which way the pin
+ * tweens out on a pull, and how a tap is routed to the nearest rod. The spine
+ * is the actual geometry, and is what both the physics and the art follow.
+ */
 function rampPin(id, x0, y0, x1, y1, opts = {}) {
-  const dx = x1 - x0;
-  const dy = y1 - y0;
+  const shape = opts.shape || 'straight';
+  const spine = BLADES[shape]([x0, y0], [x1, y1], opts.dir || Math.sign(x1 - x0) || 1);
+  /*
+   * The chord is measured off the spine's own ends, not off the two points the
+   * caller asked for. A flare stops short of the design low point and a lip
+   * reaches past it, and the chord has to follow, because it is what the ring
+   * handle, the pull animation and the tap routing are all placed from — a
+   * chord describing a plate that is not there puts the handle in mid-air.
+   */
+  const head = spine[0];
+  const tail = spine[spine.length - 1];
+  const dx = tail[0] - head[0];
+  const dy = tail[1] - head[1];
   const len = Math.hypot(dx, dy);
   return {
     id,
     kind: 'ramp',
-    x: r1((x0 + x1) / 2),
-    y: r1((y0 + y1) / 2),
+    shape,
+    x: r1((head[0] + tail[0]) / 2),
+    y: r1((head[1] + tail[1]) / 2),
     len: r1(len + 8),
     thick: opts.thick || 16,
     angle: r1((Math.atan2(dy, dx) * 180) / Math.PI),
     out: [r1(dx / len), r1(dy / len)],
+    spine: spine.map(([x, y]) => [r1(x), r1(y)]),
     requires: [],
   };
 }
@@ -334,8 +436,46 @@ function shiftBottom(dx, walls, pins, receivers, fromWall, fromPin, fromRecv) {
   for (let i = fromWall; i < walls.length; i++) {
     for (const pt of walls[i].points) pt[0] = r1(pt[0] + dx);
   }
-  for (let i = fromPin; i < pins.length; i++) pins[i].x = r1(pins[i].x + dx);
+  for (let i = fromPin; i < pins.length; i++) {
+    pins[i].x = r1(pins[i].x + dx);
+    // A blade's spine is the geometry the physics and the art actually follow,
+    // so it has to travel with the chord — a spine left behind puts the plate
+    // somewhere other than the handle that operates it.
+    if (pins[i].spine) for (const pt of pins[i].spine) pt[0] = r1(pt[0] + dx);
+  }
   for (let i = fromRecv; i < receivers.length; i++) receivers[i].x = r1(receivers[i].x + dx);
+}
+
+/**
+ * The collector neck, in one of a few builds.
+ *
+ * All of them are the same clear opening where it matters — the bore at the
+ * bottom, which is what has to pass the fattest payload without arching — so
+ * the choice is free. What it buys is that the throat of the machine is not
+ * the same two vertical bars on all ninety boards: one level pours through a
+ * plain shaft, the next through a funnel, the next past a flanged collar.
+ */
+const NECK_STYLES = ['plain', 'funnel', 'collar'];
+
+function neckWalls(style, neckL, neckR, top, botL, botR) {
+  const drop = Math.min(botL, botR) - top;
+  if (style === 'funnel') {
+    // Mouth wider than the throat, tapering down — a continuation of the bowl.
+    const flare = 34 + Math.round(drop * 0.18);
+    return [
+      curveWall([[neckL - flare, top], [neckL - flare * 0.3, top + drop * 0.6], [neckL, botL]]),
+      curveWall([[neckR + flare, top], [neckR + flare * 0.3, top + drop * 0.6], [neckR, botR]]),
+    ];
+  }
+  if (style === 'collar') {
+    // A shaft with a flange around its mouth, the way a real hopper is braced.
+    const lipY = top + Math.min(26, drop * 0.24);
+    return [
+      wall([[neckL - 40, top], [neckL - 40, lipY], [neckL, lipY], [neckL, botL]]),
+      wall([[neckR + 40, top], [neckR + 40, lipY], [neckR, lipY], [neckR, botR]]),
+    ];
+  }
+  return [vwall(neckL, top, botL), vwall(neckR, top, botR)];
 }
 
 /**
@@ -381,6 +521,20 @@ function bottomCascade(rng, types, channel, pins, receivers, lava) {
   const rise = jit(124, 26);
   const topBladeY = dropTop - rise + 10 - (blades - 1) * step;
 
+  /*
+   * A shape per blade, drawn without replacement.
+   *
+   * Two blades on one board must never be the same shape, and — via the play
+   * signature — nor may a board repeat a machine seen anywhere else in the
+   * run. This is the part of the level the player spends the whole level
+   * operating, so it is the part that has to stop looking familiar first.
+   */
+  const shapes = Object.keys(BLADES);
+  const nextShape = () => shapes.splice(Math.floor(rng() * shapes.length) % shapes.length, 1)[0];
+  // One gauge of plate for the whole machine: blades of assorted thicknesses
+  // read as parts from different machines rather than one built to a spec.
+  const plate = jit(17, 6);
+
   const ramps = [];
   for (let k = 0; k < blades; k++) {
     const y0 = topBladeY + k * step;
@@ -388,7 +542,7 @@ function bottomCascade(rng, types, channel, pins, receivers, lava) {
     // throw, so flow lands on the ramp rather than beside it.
     const x0 = dir > 0 ? neckL - jit(4, 8) : neckR + jit(4, 8);
     const x1 = dir > 0 ? jit(566, 30) : jit(154, 30);
-    ramps.push({ id: `blade${k + 1}`, x0, y0, x1, y1: y0 + rise, dir });
+    ramps.push({ id: `blade${k + 1}`, x0, y0, x1, y1: y0 + rise, dir, shape: nextShape() });
     dir = -dir;
   }
 
@@ -397,12 +551,20 @@ function bottomCascade(rng, types, channel, pins, receivers, lava) {
   // ramp ducks under it instead of catching on it.
   const neckTop = ramps[0].y0 - jit(64, 16);
   const shortSide = ramps[0].dir;
-  channel(
-    vwall(neckL, neckTop, ramps[0].y0 - (shortSide < 0 ? jit(30, 10) : jit(8, 6))),
-    vwall(neckR, neckTop, ramps[0].y0 - (shortSide > 0 ? jit(30, 10) : jit(8, 6)))
+  const neckStyle = NECK_STYLES[Math.floor(rng() * NECK_STYLES.length) % NECK_STYLES.length];
+  const [neckWallL, neckWallR] = neckWalls(
+    neckStyle,
+    neckL,
+    neckR,
+    neckTop,
+    ramps[0].y0 - (shortSide < 0 ? jit(30, 10) : jit(8, 6)),
+    ramps[0].y0 - (shortSide > 0 ? jit(30, 10) : jit(8, 6))
   );
+  channel(neckWallL, neckWallR);
 
-  for (const r of ramps) pins.push(rampPin(r.id, r.x0, r.y0, r.x1, r.y1));
+  for (const r of ramps) {
+    pins.push(rampPin(r.id, r.x0, r.y0, r.x1, r.y1, { shape: r.shape, dir: r.dir, thick: plate }));
+  }
 
   /*
    * A pit sits under the end of its ramp, pulled a little further out so the
@@ -472,6 +634,7 @@ function bottomCascade(rng, types, channel, pins, receivers, lava) {
     neckR,
     order: types.slice(),
     blades: ramps.map((r) => r.id),
+    machine: `${neckStyle}:${ramps.map((r) => `${r.shape}${r.dir > 0 ? 'R' : 'L'}`).join('+')}`,
   };
 }
 
@@ -794,7 +957,12 @@ function mirrorLevel(lv) {
     p.x = fx(p.x);
     p.angle = r1(180 - p.angle);
     p.out = [r1(-p.out[0]), p.out[1]];
+    // A blade's spine is world geometry, so it flips with everything else. Its
+    // handedness reverses in the process, which is the point: a mirrored
+    // machine throws the other way and is operated the other way.
+    if (p.spine) p.spine = flipPts(p.spine);
   }
+  if (lv.machine) lv.machine = lv.machine.replace(/[RL]/g, (c) => (c === 'R' ? 'L' : 'R'));
   for (const r of lv.receivers) {
     r.x = fx(r.x);
     r.charSide = -r.charSide;
@@ -1181,7 +1349,7 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   });
 
   const family = inletCount === 2 ? 'flow' : inletCount === 3 ? 'sort' : 'manifold';
-  return { family, walls, tubes, pins, receivers, spawns, solution };
+  return { family, machine: bottom.machine, walls, tubes, pins, receivers, spawns, solution };
 }
 
 /**
@@ -1329,6 +1497,10 @@ function attemptLevel(level, attempt) {
     theme: chapter.theme,
     bonus: isBonus,
     noFail: isBonus,
+    // What the bottom of the board is built from — the neck style and each
+    // blade's shape and throw. Carried so the uniqueness check and the variety
+    // report can ask "is this the same machine?" without re-deriving it.
+    machine: core.machine || 'vault',
     par: core.solution.length,
     parTime: isBonus ? 26 : 12 + core.solution.length * 5 + payloadCount,
     reward: isBonus ? 0 : 18 + Math.floor(level / 4) * 4,
@@ -1400,6 +1572,17 @@ function overlap(a, b) {
  * exactly how levels 2 and 4 came out the same to play while every geometric
  * measure I had called them distinct.
  */
+/**
+ * The blade shapes in a machine, with the handedness stripped off.
+ *
+ * A mirrored machine is a different machine to *operate* — it throws the other
+ * way — but it is the same machine to *look at*, and the shapes of the plates
+ * down there are the thing that has been identical on every board. So the
+ * short-span check works on this, and the whole-book check works on the
+ * signature, which keeps the handedness.
+ */
+const bladeShapes = (machine) => machine.slice(machine.indexOf(':') + 1).replace(/[RL]/g, '');
+
 function playSignature(lv) {
   const steps = lv.solution.map((id) => /^g(\d+)_/.exec(id)?.[1] ?? 'B');
   /*
@@ -1415,9 +1598,20 @@ function playSignature(lv) {
     lv.tubes.filter((t) => t.cap).length,
     lv.pins.length,
     steps.filter((s, i) => s !== steps[i - 1]).join('-'),
-    // A ramp pointing right throws the flow right; mirroring the board flips
-    // this, which is correct — a mirrored machine is operated the other way.
-    lv.pins.filter((p) => p.kind === 'ramp').map((p) => (Math.abs(p.angle) < 90 ? 'R' : 'L')).join(''),
+    lv.receivers.filter((r) => !r.hazard).length,
+    /*
+     * The machine at the bottom: the neck build, and each blade's shape and
+     * which way it throws. A ramp pointing right throws the flow right, and
+     * mirroring the board flips that, which is correct — a mirrored machine is
+     * operated the other way.
+     *
+     * This is the half of the signature that carries the most weight now. Two
+     * boards can want the same pull order and still be different jobs if one
+     * pours over a stepped knee into a wide pit and the other rides a bow, so
+     * the shapes belong here rather than in the geometric similarity check
+     * where jitter would drown them out.
+     */
+    lv.machine,
   ].join('|');
 }
 
@@ -1445,7 +1639,7 @@ function trapsBite(lv) {
   return r.wrong + r.lost > 0;
 }
 
-function buildLevel(level, recent) {
+function buildLevel(level, recent, used) {
   let fallback = null;
   let lookalike = null;
 
@@ -1464,13 +1658,38 @@ function buildLevel(level, recent) {
     const shape = silhouette(candidate);
     const sig = playSignature(candidate);
     /*
-     * Compared against a window of recent levels, not just the one before.
-     * Checking only the immediately previous level is what let 2 and 4 come out
-     * identical, and 3 and 5 with them: nothing ever compared a level to the
-     * one two places back, so alternating between two designs passed every
-     * check. A player notices that immediately.
+     * Two questions, asked over two different spans.
+     *
+     * A board that *plays* like one already in the book is a repeat wherever
+     * it sits — the player will meet both in the same run — so the signature
+     * is checked against every level built so far, not a window. Checking a
+     * window is what let 2 and 4 come out identical and 3 and 5 with them:
+     * nothing ever compared a level to the one two places back, so alternating
+     * between two designs passed every check.
+     *
+     * Looking alike is a weaker complaint and is genuinely about proximity: a
+     * silhouette echoed forty levels apart is nobody's problem, and demanding
+     * ninety distinct silhouettes from one bowl and one board width would only
+     * push the generator into its fallbacks. So that one keeps the window.
      */
-    const seen = recent.some((r) => r.sig === sig || overlap(r.shape, shape) > 0.75);
+    /*
+     * And the machine itself, over a short span.
+     *
+     * The signature check above already forbids an exact repeat anywhere, but
+     * it is satisfied by a board that differs only in its pull order — which
+     * leaves the bottom of the screen, the part being operated for the whole
+     * level, looking and behaving the same three levels running. So the
+     * blades are held to a stricter rule than the rest of the board: never the
+     * same arrangement as any of the last six, and never even the same set of
+     * shapes as the last three, whatever the neck around them is doing.
+     */
+    const machine = candidate.machine;
+    const blades = bladeShapes(machine);
+    const repeated =
+      recent.some((r) => r.machine === machine) ||
+      recent.slice(-3).some((r) => r.blades === blades);
+
+    const seen = used.has(sig) || repeated || recent.some((r) => overlap(r.shape, shape) > 0.75);
 
     /*
      * A trap has to actually cost something.
@@ -1522,15 +1741,24 @@ let totalAttempts = 0;
  */
 const RECALL = 6;
 const recent = [];
-for (let i = 1; i <= 100; i++) {
-  const built = buildLevel(i, recent);
+/* Every play signature spent so far. Bonus rounds stay out of this too. */
+const used = new Set();
+for (let i = 1; i <= COUNT; i++) {
+  const built = buildLevel(i, recent, used);
   if (!built.level.bonus) {
-    recent.push({ shape: built.shape, sig: built.sig });
+    const machine = built.level.machine;
+    recent.push({ shape: built.shape, machine, blades: bladeShapes(machine) });
     if (recent.length > RECALL) recent.shift();
+    used.add(built.sig);
   }
   quality[built.quality]++;
   totalAttempts += built.attempt + 1;
   levels.push(built.level);
+  // A full book is an hour of simulation, so say where it has got to. stderr,
+  // so piping stdout somewhere still gives you just the summary.
+  process.stderr.write(
+    `  L${i} ${built.quality} in ${built.attempt + 1} · ${built.level.machine}\n`
+  );
   if (built.quality === 'unsolved') console.warn(`  ! L${i} could not be made solvable`);
 }
 
@@ -1547,7 +1775,7 @@ writeFileSync(OUT, JSON.stringify(doc));
 const pins = levels.reduce((n, l) => n + l.pins.length, 0);
 console.log(
   `Wrote ${levels.length} levels to ${OUT} (${(JSON.stringify(doc).length / 1024).toFixed(1)} KB)\n` +
-    `pins: ${levels[0].pins.length} at L1 → ${levels[98].pins.length} at L99, ${pins} total\n` +
+    `pins: ${levels[0].pins.length} at L1 → ${levels.at(-1).pins.length} at L${levels.at(-1).id}, ${pins} total\n` +
     `solver: ${quality.clean} clean, ${quality.lookalike} clean-but-similar, ` +
     `${quality.messy} playable-but-messy, ${quality.unsolved} unsolved ` +
     `(${(totalAttempts / levels.length).toFixed(1)} attempts/level)`

@@ -30,16 +30,18 @@ function finish(tex) {
 /* Payloads                                                            */
 /* ------------------------------------------------------------------ */
 
-function drawCoal(ctx, s, style) {
+function drawCoal(ctx, s, style, rnd) {
   const c = s / 2;
   const r = s / 2 - 3;
 
-  // Irregular lump silhouette.
+  // Irregular lump silhouette. The corner count and every radius come from the
+  // variant's own rng, so a hopper of coal is a heap of distinct lumps rather
+  // than one lump printed nine times.
   const pts = [];
-  const n = 9;
+  const n = 7 + Math.floor(rnd() * 4);
   for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    const rr = r * (0.78 + ((i * 37) % 11) / 40);
+    const a = (i / n) * Math.PI * 2 + rnd() * 0.24;
+    const rr = r * (0.72 + rnd() * 0.34);
     pts.push([c + Math.cos(a) * rr, c + Math.sin(a) * rr]);
   }
 
@@ -74,14 +76,46 @@ function drawCoal(ctx, s, style) {
   ctx.beginPath();
   ctx.arc(c - r * 0.3, c - r * 0.35, s * 0.045, 0, Math.PI * 2);
   ctx.fill();
+
+  rimLight(ctx, pts, s);
 }
 
-function drawApple(ctx, s, style) {
+/**
+ * A cool highlight along the lower-right of a silhouette.
+ *
+ * Everything in this game falls through backlit glass, and a lump with light
+ * on its top face only reads as a sticker on the background. One bounce
+ * light along the opposite edge is what separates it.
+ */
+function rimLight(ctx, pts, s) {
+  ctx.save();
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  ctx.clip();
+  ctx.strokeStyle = css(0xbfe6ff, 0.55);
+  ctx.lineWidth = s * 0.07;
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.closePath();
+  ctx.translate(-s * 0.03, -s * 0.03);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawApple(ctx, s, style, rnd) {
   const c = s / 2;
   const r = s / 2 - 4;
+  // Lean, lobe spread and which way the stem bends all shift per variant, so
+  // a stack of apples in a tube is a crate of fruit rather than a pattern.
+  const lean = (rnd() - 0.5) * 0.5;
+  const side = rnd() < 0.5 ? -1 : 1;
+  const spread = 0.18 + rnd() * 0.1;
 
   ctx.save();
-  ctx.translate(0, s * 0.04);
+  ctx.translate(c, c + s * 0.04);
+  ctx.rotate(lean);
+  ctx.translate(-c, -c);
 
   // Body: two overlapping lobes for the classic apple silhouette.
   const g = ctx.createRadialGradient(c - r * 0.35, c - r * 0.4, r * 0.1, c, c, r * 1.15);
@@ -91,11 +125,16 @@ function drawApple(ctx, s, style) {
   ctx.fillStyle = g;
 
   ctx.beginPath();
-  ctx.arc(c - r * 0.22, c, r * 0.82, 0, Math.PI * 2);
-  ctx.arc(c + r * 0.22, c, r * 0.82, 0, Math.PI * 2);
+  ctx.arc(c - r * spread, c, r * 0.82, 0, Math.PI * 2);
+  ctx.arc(c + r * spread, c, r * 0.82, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.restore();
+  // Bounce light along the shaded flank.
+  ctx.strokeStyle = css(0xffd0c0, 0.4);
+  ctx.lineWidth = s * 0.05;
+  ctx.beginPath();
+  ctx.arc(c, c + r * 0.06, r * 0.84, Math.PI * 0.1, Math.PI * 0.62);
+  ctx.stroke();
 
   // Stem.
   ctx.strokeStyle = css(0x6b4326);
@@ -103,13 +142,13 @@ function drawApple(ctx, s, style) {
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(c, c - r * 0.72);
-  ctx.quadraticCurveTo(c + s * 0.03, c - r * 0.95, c + s * 0.01, c - r * 1.05);
+  ctx.quadraticCurveTo(c + side * s * 0.04, c - r * 0.95, c + side * s * 0.02, c - r * 1.05);
   ctx.stroke();
 
   // Leaf.
   ctx.fillStyle = css(style.spark);
   ctx.beginPath();
-  ctx.ellipse(c + r * 0.32, c - r * 0.86, r * 0.3, r * 0.15, -0.5, 0, Math.PI * 2);
+  ctx.ellipse(c + side * r * 0.32, c - r * 0.86, r * 0.3, r * 0.15, side * -0.5, 0, Math.PI * 2);
   ctx.fill();
 
   // Specular.
@@ -117,20 +156,26 @@ function drawApple(ctx, s, style) {
   ctx.beginPath();
   ctx.ellipse(c - r * 0.34, c - r * 0.3, r * 0.2, r * 0.3, -0.5, 0, Math.PI * 2);
   ctx.fill();
+
+  ctx.restore();
 }
 
-function drawGem(ctx, s, style) {
+function drawGem(ctx, s, style, rnd) {
   const c = s / 2;
   const r = s / 2 - 3;
   const top = c - r * 0.85;
-  const shoulder = c - r * 0.3;
+  const shoulder = c - r * (0.24 + rnd() * 0.18);
+  // A wider or narrower cut per variant: the same stone, cut by a different
+  // hand. The crown facets follow, because they are struck from the shoulder.
+  const waist = 0.72 + rnd() * 0.22;
+  const point = 0.4 + rnd() * 0.2;
 
   const face = [
     [c, top],
-    [c + r * 0.82, shoulder],
-    [c + r * 0.5, c + r * 0.9],
-    [c - r * 0.5, c + r * 0.9],
-    [c - r * 0.82, shoulder],
+    [c + r * waist, shoulder],
+    [c + r * point, c + r * 0.9],
+    [c - r * point, c + r * 0.9],
+    [c - r * waist, shoulder],
   ];
 
   const g = ctx.createLinearGradient(0, top, 0, c + r);
@@ -151,8 +196,8 @@ function drawGem(ctx, s, style) {
     ctx.moveTo(c, shoulder);
     ctx.lineTo(x, y);
   });
-  ctx.moveTo(c - r * 0.82, shoulder);
-  ctx.lineTo(c + r * 0.82, shoulder);
+  ctx.moveTo(c - r * waist, shoulder);
+  ctx.lineTo(c + r * waist, shoulder);
   ctx.stroke();
 
   ctx.strokeStyle = css(0xffffff, 0.85);
@@ -169,14 +214,26 @@ function drawGem(ctx, s, style) {
   ctx.fill();
 }
 
-function drawCoin(ctx, s, style) {
+function drawCoin(ctx, s, style, rnd) {
   const c = s / 2;
   const r = s / 2 - 2;
+  const milled = 18 + Math.floor(rnd() * 10);
 
   ctx.fillStyle = css(0xb2700f);
   ctx.beginPath();
   ctx.arc(c, c, r, 0, Math.PI * 2);
   ctx.fill();
+
+  // Milled edge: the notches around the rim of a struck coin.
+  ctx.strokeStyle = css(0x8a5408, 0.9);
+  ctx.lineWidth = s * 0.035;
+  for (let i = 0; i < milled; i++) {
+    const a = (i / milled) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(c + Math.cos(a) * r * 0.9, c + Math.sin(a) * r * 0.9);
+    ctx.lineTo(c + Math.cos(a) * r, c + Math.sin(a) * r);
+    ctx.stroke();
+  }
 
   const g = ctx.createRadialGradient(c - r * 0.35, c - r * 0.4, r * 0.1, c, c, r);
   g.addColorStop(0, css(style.hi));
@@ -205,7 +262,7 @@ function drawCoin(ctx, s, style) {
   ctx.stroke();
 }
 
-function drawBomb(ctx, s, style) {
+function drawBomb(ctx, s, style, rnd) {
   const c = s / 2;
   const r = s / 2 - 5;
 
@@ -221,6 +278,13 @@ function drawBomb(ctx, s, style) {
   // Cap + fuse.
   ctx.fillStyle = css(0x5a5f6d);
   ctx.fillRect(c - r * 0.24, c - r * 0.95, r * 0.48, r * 0.28);
+
+  // Band around the shell, at a slightly different height per variant.
+  ctx.strokeStyle = css(0x40444f, 0.9);
+  ctx.lineWidth = s * 0.05;
+  ctx.beginPath();
+  ctx.ellipse(c, c + s * 0.05, r * 0.94, r * (0.2 + rnd() * 0.14), 0, 0, Math.PI * 2);
+  ctx.stroke();
 
   ctx.strokeStyle = css(0xc8a06a);
   ctx.lineWidth = s * 0.055;
@@ -246,6 +310,18 @@ function drawBomb(ctx, s, style) {
   ctx.fill();
 }
 
+/** A small deterministic rng, seeded from a payload type and variant index. */
+function seeded(type, variant) {
+  let a = variant * 0x9e3779b1 + 1;
+  for (let i = 0; i < type.length; i++) a = (a * 31 + type.charCodeAt(i)) | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 const PAYLOAD_PAINTERS = {
   coal: drawCoal,
   apple: drawApple,
@@ -254,7 +330,18 @@ const PAYLOAD_PAINTERS = {
   bomb: drawBomb,
 };
 
-export const payloadKey = (type) => `p_${type}`;
+/**
+ * How many cuts of each payload are painted.
+ *
+ * Three is the point where a tube full of coal stops reading as a repeating
+ * tile and starts reading as a heap, and it costs three small canvases per
+ * type at boot. Variant 0 keeps the plain `p_<type>` key, because the menus,
+ * the shop and the results screen all reach for `p_coin` directly.
+ */
+export const PAYLOAD_VARIANTS = 3;
+
+export const payloadKey = (type, variant = 0) =>
+  variant ? `p_${type}_${variant}` : `p_${type}`;
 
 /* ------------------------------------------------------------------ */
 /* Effects                                                             */
@@ -416,10 +503,15 @@ export function buildTextures(scene) {
   for (const [type, style] of Object.entries(PAYLOAD_STYLE)) {
     const r = { coal: 19, apple: 18, gem: 17, coin: 14, bomb: 20 }[type] || 18;
     const size = Math.ceil(r * 2 * ART_SCALE) + 8;
-    const tex = canvasFor(scene, payloadKey(type), size, size);
-    if (tex) {
-      PAYLOAD_PAINTERS[type](tex.getContext(), size, style);
-      finish(tex);
+    for (let v = 0; v < PAYLOAD_VARIANTS; v++) {
+      const tex = canvasFor(scene, payloadKey(type, v), size, size);
+      if (tex) {
+        // Seeded per type and variant, so the same lump of coal is painted the
+        // same way in every session — worth having when a screenshot or a
+        // smoke test is being compared against the last one.
+        PAYLOAD_PAINTERS[type](tex.getContext(), size, style, seeded(type, v));
+        finish(tex);
+      }
     }
   }
 

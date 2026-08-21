@@ -84,7 +84,8 @@ export default class GameScene extends Phaser.Scene {
     this.matter.world.autoUpdate = true;
     this.cameras.main.setBackgroundColor('#080b17');
 
-    this.backdrop = new Backdrop(this, lv.theme);
+    // Seeded by level, so ten boards in one chapter get ten horizons.
+    this.backdrop = new Backdrop(this, lv.theme, { seed: lv.id });
 
     this._buildWorldBounds();
 

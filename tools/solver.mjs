@@ -122,18 +122,61 @@ function buildLevel(lv) {
   );
 
   /* --- pins --- */
+  /*
+   * A pin is one body unless it carries a spine, in which case it is a run of
+   * them — a rectangle per segment with a disc at each interior joint, exactly
+   * the way a pipe wall is built. That is what lets a diverter blade be a
+   * knee, a bow or a hooked lip rather than only a plank, and pulling it takes
+   * the whole run out at once.
+   *
+   * Must mirror Pin._buildBodies() in src/objects/Pin.js.
+   */
   const pins = new Map();
   for (const def of lv.pins) {
-    const body = Bodies.rectangle(def.x, def.y, def.len, def.thick, {
-      isStatic: true,
-      angle: (def.angle * Math.PI) / 180,
-      friction: 0.04,
-      restitution: 0.02,
-      chamfer: { radius: Math.min(def.thick / 2, 8) },
-      label: 'pin',
-    });
-    pins.set(def.id, body);
-    statics.push(body);
+    const parts = [];
+    if (def.spine && def.spine.length > 1) {
+      for (let i = 0; i < def.spine.length - 1; i++) {
+        const [x0, y0] = def.spine[i];
+        const [x1, y1] = def.spine[i + 1];
+        const dx = x1 - x0;
+        const dy = y1 - y0;
+        const len = Math.hypot(dx, dy);
+        if (len < 1) continue;
+        parts.push(
+          Bodies.rectangle((x0 + x1) / 2, (y0 + y1) / 2, len + def.thick, def.thick, {
+            isStatic: true,
+            angle: Math.atan2(dy, dx),
+            friction: 0.04,
+            restitution: 0.02,
+            chamfer: { radius: Math.min(def.thick / 2, 8) },
+            label: 'pin',
+          })
+        );
+      }
+      for (let i = 1; i < def.spine.length - 1; i++) {
+        parts.push(
+          Bodies.circle(def.spine[i][0], def.spine[i][1], def.thick / 2, {
+            isStatic: true,
+            friction: 0.04,
+            restitution: 0.02,
+            label: 'pin',
+          })
+        );
+      }
+    } else {
+      parts.push(
+        Bodies.rectangle(def.x, def.y, def.len, def.thick, {
+          isStatic: true,
+          angle: (def.angle * Math.PI) / 180,
+          friction: 0.04,
+          restitution: 0.02,
+          chamfer: { radius: Math.min(def.thick / 2, 8) },
+          label: 'pin',
+        })
+      );
+    }
+    pins.set(def.id, parts);
+    statics.push(...parts);
   }
 
   /* --- payloads --- */
@@ -236,8 +279,8 @@ export function simulateLevel(lv, { verbose = false } = {}) {
 
   for (const pinId of lv.solution) {
     if (TRACE) console.log(`PULL ${pinId}`);
-    const body = pins.get(pinId);
-    if (body) Composite.remove(engine.world, body);
+    const parts = pins.get(pinId);
+    if (parts) for (const body of parts) Composite.remove(engine.world, body);
     // Mirrors GameScene._wakeAll(): removing a support does not wake sleepers.
     for (const p of payloads) if (!p.resolved) Sleeping.set(p.body, false);
     runUntilQuiet(MAX_FRAMES_PER_PULL);

@@ -48,6 +48,32 @@ for (const lv of doc.levels) {
     if (![p.x, p.y, p.len, p.thick, p.angle].every(num)) errors.push(at(`pin ${p.id} has bad numbers`));
     if (p.len < 40) errors.push(at(`pin ${p.id} is absurdly short (${p.len})`));
     if (!Array.isArray(p.out) || p.out.length !== 2) errors.push(at(`pin ${p.id} has no pull direction`));
+    /*
+     * A blade's spine is its real geometry — physics follows it, not the
+     * chord — so a spine that has drifted away from the chord the rest of the
+     * game reasons about would put the plate somewhere the ring handle, the
+     * pull animation and the tap routing are not.
+     */
+    if (p.spine) {
+      if (!Array.isArray(p.spine) || p.spine.length < 2) {
+        errors.push(at(`pin ${p.id} has a spine with nothing in it`));
+      } else if (!p.spine.every((q) => Array.isArray(q) && q.length === 2 && q.every(num))) {
+        errors.push(at(`pin ${p.id} has bad numbers in its spine`));
+      } else {
+        const a = (p.angle * Math.PI) / 180;
+        const ends = [
+          [p.x - (Math.cos(a) * (p.len - 8)) / 2, p.y - (Math.sin(a) * (p.len - 8)) / 2],
+          [p.x + (Math.cos(a) * (p.len - 8)) / 2, p.y + (Math.sin(a) * (p.len - 8)) / 2],
+        ];
+        for (const [i, end] of [[0, ends[0]], [p.spine.length - 1, ends[1]]]) {
+          const q = p.spine[i];
+          if (Math.hypot(q[0] - end[0], q[1] - end[1]) > 2) {
+            errors.push(at(`pin ${p.id} spine does not start and end on its chord`));
+            break;
+          }
+        }
+      }
+    }
     for (const req of p.requires) {
       if (!lv.pins.some((q) => q.id === req)) errors.push(at(`pin ${p.id} requires missing pin ${req}`));
     }

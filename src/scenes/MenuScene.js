@@ -41,7 +41,7 @@ export default class MenuScene extends Phaser.Scene {
 
   create() {
     const chapter = Levels.chapterFor(save.currentLevel);
-    this.backdrop = new Backdrop(this, chapter.theme, { ground: false });
+    this.backdrop = new Backdrop(this, chapter.theme, { ground: false, seed: 7 });
 
     this._rain();
     this._title();

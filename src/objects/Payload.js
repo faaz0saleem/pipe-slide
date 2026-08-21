@@ -5,7 +5,7 @@
 import Phaser from 'phaser';
 import { DEPTH, PHYSICS } from '../config/GameConfig.js';
 import { PAYLOAD_STYLE } from '../config/Palette.js';
-import { payloadKey, ART_SCALE } from '../core/Art.js';
+import { payloadKey, PAYLOAD_VARIANTS, ART_SCALE } from '../core/Art.js';
 import { getItem } from '../config/ShopCatalog.js';
 
 /**
@@ -55,7 +55,11 @@ export default class Payload {
     // glass.
     const collider = radius * (COLLIDER_RADIUS[type] ?? 1) * ART_SCALE;
 
-    this.sprite = scene.matter.add.image(x, y, payloadKey(type), null, {
+    // One of the painted cuts, at random: a tube of coal should look like a
+    // heap of lumps, not one lump stamped out eight times.
+    const variant = Phaser.Math.Between(0, PAYLOAD_VARIANTS - 1);
+
+    this.sprite = scene.matter.add.image(x, y, payloadKey(type, variant), null, {
       shape: { type: 'circle', radius: collider },
       friction: PHYSICS.payloadFriction,
       frictionStatic: PHYSICS.payloadFrictionStatic,
