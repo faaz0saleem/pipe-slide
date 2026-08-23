@@ -457,7 +457,7 @@ function bottomCascade(rng, types, channel, pins, receivers) {
   for (let i = 1; i < spans.length; i++) if (spans[i][0] < spans[i - 1][1]) return null;
 
   return {
-    bowlTop: neckTop - jit(132, 28),
+    bowlTop: neckTop - jit(140, 86),
     neckTop,
     neckL,
     neckR,
@@ -467,25 +467,37 @@ function bottomCascade(rng, types, channel, pins, receivers) {
 }
 
 /** The curved collector every tube empties into. */
-function bowl(topY, neckTop, outer, shift, neckL, neckR) {
+/**
+ * The collector every tube empties into.
+ *
+ * Its two walls are shaped independently, and that is the point. The control
+ * ratios used to be four fixed numbers, so however much the mouth, depth and
+ * neck were jittered, every board got the same symmetric funnel at a different
+ * size — the one big piece of glass above the blades, identical throughout.
+ * Steering each wall separately gives a steep V on one board, a wide bell on
+ * the next, and a lopsided chute that throws the flow to one side on a third.
+ */
+function bowl(topY, neckTop, outer, shift, neckL, neckR, rng) {
   const drop = neckTop - topY;
   const left = neckL + shift;
   const right = neckR + shift;
-  // Asymmetric on a shifted drain, which is exactly the point: the flow leans.
-  return [
-    curveWall([
-      [outer, topY],
-      [outer + (left - outer) * 0.16, topY + drop * 0.38],
-      [outer + (left - outer) * 0.62, topY + drop * 0.76],
-      [left, neckTop],
-    ]),
-    curveWall([
-      [W - outer, topY],
-      [W - outer + (right - (W - outer)) * 0.16, topY + drop * 0.38],
-      [W - outer + (right - (W - outer)) * 0.62, topY + drop * 0.76],
-      [right, neckTop],
-    ]),
-  ];
+
+  // Where each wall's two steering points sit: how far along its run, and how
+  // far in towards the neck it has pulled by then.
+  const wall2 = (fromX, toX) => {
+    const t1 = 0.26 + rng() * 0.2;
+    const t2 = t1 + 0.22 + rng() * 0.24;
+    const k1 = 0.06 + rng() * 0.34;
+    const k2 = Math.max(k1 + 0.12, 0.42 + rng() * 0.4);
+    return curveWall([
+      [fromX, topY],
+      [fromX + (toX - fromX) * k1, topY + drop * t1],
+      [fromX + (toX - fromX) * k2, topY + drop * t2],
+      [toX, neckTop],
+    ]);
+  };
+
+  return [wall2(outer, left), wall2(W - outer, right)];
 }
 
 /* ------------------------------------------------------------------ */
@@ -1094,10 +1106,11 @@ function buildPipeLevel(rng, level, pipes, gateCount, pitCount) {
   const [bowlL, bowlR] = bowl(
     bottom.bowlTop,
     bottom.neckTop,
-    wobble({ 2: 150, 3: 100, 4: 82 }[inletCount], 34),
+    wobble({ 2: 150, 3: 100, 4: 82 }[inletCount], 52),
     clamped,
     bottom.neckL,
-    bottom.neckR
+    bottom.neckR,
+    rng
   );
   channel(bowlL, bowlR);
 
