@@ -374,12 +374,23 @@ function bottomCascade(rng, types, channel, pins, receivers) {
   // machine to operate from one that goes left, then right.
   let dir = rng() < 0.5 ? -1 : 1;
 
-  // Laid out from the ground up: the straight-drop pit sets the bottom, the
-  // blades stack above it, and the neck hangs above the topmost blade.
-  const dropTop = jit(1040, 18);
-  const step = jit(95, 18);
-  const rise = jit(124, 26);
-  const topBladeY = dropTop - rise + 10 - (blades - 1) * step;
+  /*
+   * Laid out from the ground up: the straight-drop pit sets the bottom, the
+   * blades stack above it, and the neck hangs above the topmost blade.
+   *
+   * Every blade used to share one `rise`, and every blade reached for the same
+   * spot near the board edge, so all of them came out 320 to 360 pixels long at
+   * 19 to 24 degrees — the same two ramps on every board, which is exactly what
+   * it looked like. Each blade now picks its own drop and its own landing spot,
+   * which swings the slope from a gentle slide to a steep chute and the length
+   * by half as much again.
+   */
+  const dropTop = jit(1040, 22);
+  const step = jit(96, 26);
+  const rises = [];
+  for (let k = 0; k < blades; k++) rises.push(jit(130, 76));
+  const tallest = Math.max(...rises);
+  const topBladeY = dropTop - tallest + 10 - (blades - 1) * step;
 
   const ramps = [];
   for (let k = 0; k < blades; k++) {
@@ -387,8 +398,25 @@ function bottomCascade(rng, types, channel, pins, receivers) {
     // The high end tucks just past the neck edge on the far side from the
     // throw, so flow lands on the ramp rather than beside it.
     const x0 = dir > 0 ? neckL - jit(4, 8) : neckR + jit(4, 8);
-    const x1 = dir > 0 ? jit(566, 30) : jit(154, 30);
-    ramps.push({ id: `blade${k + 1}`, x0, y0, x1, y1: y0 + rise, dir });
+    /*
+     * Where it puts the payload down. A short blade drops it just clear of the
+     * neck; a long one carries it out to the wall.
+     *
+     * Blades alternate sides, so on a three-blade machine the first and third
+     * throw the same way — and if both reach the same distance their pits land
+     * on top of each other and the board is thrown out. Each gets its own band
+     * of the floor instead, which is why three-blade boards can exist at all.
+     */
+    const sideIdx = Math.floor(k / 2);
+    const reach = Math.min(0.99, 0.4 + 0.3 * sideIdx + rng() * 0.28);
+    // Nearest and furthest the blade may set its payload down. Three-blade
+    // machines start closer in, because they have to fit two landings a side.
+    const near = 96;
+    const span = W - 60 - cx - near;
+    const x1 = dir > 0
+      ? cx + near + Math.round(reach * span)
+      : cx - near - Math.round(reach * span);
+    ramps.push({ id: `blade${k + 1}`, x0, y0, x1, y1: y0 + rises[k], dir });
     dir = -dir;
   }
 
@@ -406,6 +434,10 @@ function bottomCascade(rng, types, channel, pins, receivers) {
 
   // A pit sits under the end of its ramp, pulled a little further out so the
   // payload rolls in rather than stalling on the near lip.
+  // Four pits have to share one floor, and two of them land on the same side
+  // of the neck: at full width the pair overlaps and the board is thrown out,
+  // which is why three-blade machines never once got built.
+
   ramps.forEach((r, k) => {
     const w = jit(198, 44);
     const x =
@@ -815,11 +847,49 @@ function difficultyFor(level, rng) {
   const options = [];
   for (const pipes of [2, 3, 4]) {
     if (pipes > 2 && level < 6) continue;
-    const gates = pins - (pipes === 2 ? 1 : 2);
-    if (gates >= pipes && gates <= pipes * 3) options.push({ pipes, gates });
+    /*
+     * How many pits, and therefore how many blades — pits minus one.
+     *
+     * This used to follow from the pipe count, which meant seventy-one boards
+     * in ninety had exactly two blades and the rest had one. Three never
+     * happened, so the machine's most visible moving parts were the same
+     * everywhere. A fourth pit needs a fourth payload type, which the
+     * catalogue only opens at level 16.
+     */
+    // A lava board already holds one channel back as the furnace, so it cannot
+    // also afford a fourth pit — the remaining channels run out of gates and
+    // nothing builds.
+    const wantsFurnace = level >= 55 && level % 5 < 2;
+    /*
+     * Two pits or three, so one blade or two. A fourth was tried and does not
+     * fit: it puts two landings on one side of the neck, and at any width that
+     * leaves room for both, the pits overlap and the board is rejected. Every
+     * level that aimed for four failed to build at all.
+     */
+    for (const pits of pipes === 2 ? [2] : [2, 3]) {
+      const gates = pins - (pits - 1);
+      // Every pit needs someone to fill it, and every channel holds at most
+      // three stacks.
+      if (gates < Math.max(pipes, pits) || gates > pipes * 3) continue;
+      options.push({ pipes, gates, pits });
+    }
   }
-  if (!options.length) return { pipes: 4, gates: Math.max(4, Math.min(16, pins - 2)) };
-  return options[Math.floor(rng() * options.length) % options.length];
+  if (!options.length) return { pipes: 4, gates: Math.max(4, Math.min(12, pins - 2)), pits: 3 };
+
+  /*
+   * Aim each level at a particular number of pits, and so at a particular
+   * number of blades.
+   *
+   * Left to a free draw the search simply takes whichever board is easiest to
+   * satisfy, and fewer pits is always easier — offering two, three and four
+   * evenly still produced sixty-one one-blade boards, twenty-nine two-blade
+   * and not a single three. Naming the target per level makes every attempt
+   * chase it, and only falls back when that shape genuinely cannot be built.
+   */
+  const wanted = [2, 3, 3][level % 3];
+  const aimed = options.filter((o) => o.pits === wanted);
+  const pool = aimed.length ? aimed : options;
+  return pool[Math.floor(rng() * pool.length) % pool.length];
 }
 
 /**
@@ -960,7 +1030,7 @@ function shareGates(rng, pipes, budget, max = 3, reserve = -1) {
   return out;
 }
 
-function buildPipeLevel(rng, level, pipes, gateCount) {
+function buildPipeLevel(rng, level, pipes, gateCount, pitCount) {
   const walls = [];
   const tubes = [];
   const pins = [];
@@ -987,10 +1057,10 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
   const bulbHalf = wobble({ 2: 106, 3: 93, 4: 77 }[inletCount], 14);
   const spoutHalf = wobble(inletCount === 4 ? 57 : 65, 12);
 
-  // Two pits or three. With four pipes one pit is fed by two of them, which
-  // is what keeps the routing on the proven bottom geometry.
-  const pitCount = inletCount === 2 ? 2 : 3;
   const pitTypes = distinctTypes(rng, level, pitCount, bulbHalf * 2);
+  // distinctTypes runs dry if the catalogue is smaller than the board wants,
+  // and a pit with no type is a pit nothing can ever fill.
+  if (pitTypes.length !== pitCount) return null;
 
   // How far the whole drain assembly slides off centre. Clamped so the outer
   // pit never leaves the board.
@@ -1059,7 +1129,10 @@ function buildPipeLevel(rng, level, pipes, gateCount) {
    * a spare single-gate channel almost never exists — three levels in ninety
    * ended up with lava when the intent was every one of them.
    */
-  const reserved = lavaLevel && inletCount >= 3 ? Math.floor(rng() * inletCount) % inletCount : -1;
+  // Only reserve when the channels left can still carry the gate budget: at
+  // three stacks each, holding one back has to leave room for the rest.
+  const canReserve = lavaLevel && inletCount >= 3 && gateCount - 1 <= (inletCount - 1) * 3;
+  const reserved = canReserve ? Math.floor(rng() * inletCount) % inletCount : -1;
   const perPipe = shareGates(rng, inletCount, gateCount, 3, reserved);
   const controls = inletControls(inletCount, exitY, rng, shapes.map((s) => s.fn), perPipe);
   // Which stage each group serves. `bottom.order` is the sequence the machine
@@ -1288,8 +1361,8 @@ function attemptLevel(level, attempt) {
   } else {
     // Drawn from the level's rng, so a re-roll can try a different shape of
     // board rather than the same one with the numbers nudged.
-    const { pipes, gates } = difficultyFor(level, rng);
-    core = buildPipeLevel(rng, level, pipes, gates);
+    const { pipes, gates, pits } = difficultyFor(level, rng);
+    core = buildPipeLevel(rng, level, pipes, gates, pits);
     if (!core) return null; // geometry rejected itself; the caller re-rolls
   }
 
