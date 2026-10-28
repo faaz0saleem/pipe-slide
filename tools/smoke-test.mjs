@@ -4,6 +4,7 @@
  * Fails on any page error or missing scene.
  */
 import { chromium } from 'playwright-core';
+import { chromePath } from './browser-path.mjs';
 import { createServer } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { extname, join } from 'node:path';
@@ -17,7 +18,7 @@ const server = createServer((req, res) => {
 });
 await new Promise((r) => server.listen(4198, r));
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--disable-gpu-vsync', '--disable-frame-rate-limit'] });
+const browser = await chromium.launch({ executablePath: chromePath(), args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--disable-gpu-vsync', '--disable-frame-rate-limit'] });
 const page = await browser.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));

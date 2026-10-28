@@ -6,6 +6,7 @@
  * it before its first frame lands.
  */
 import { chromium } from 'playwright-core';
+import { chromePath } from './browser-path.mjs';
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { extname, join } from 'node:path';
@@ -20,7 +21,7 @@ const server = createServer((req,res)=>{
 await new Promise(r=>server.listen(4199,r));
 mkdirSync('shots',{recursive:true});
 
-const browser = await chromium.launch({ executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args:['--no-sandbox','--enable-unsafe-swiftshader'] });
+const browser = await chromium.launch({ executablePath: chromePath(), args:['--no-sandbox','--enable-unsafe-swiftshader'] });
 const page = await browser.newPage({ viewport:{width:1280,height:800}, deviceScaleFactor:1 });
 page.on('pageerror', (e) => console.log('PAGEERROR:', e.message));
 page.on('console', (m) => { if (m.type() === 'error' && !m.text().includes('Failed to load')) console.log('CONSOLE:', m.text()); });

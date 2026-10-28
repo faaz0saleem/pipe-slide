@@ -7,6 +7,7 @@
  * ring did nothing, with no error anywhere to show for it.
  */
 import { chromium } from 'playwright-core';
+import { chromePath } from './browser-path.mjs';
 import { createServer } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { extname, join } from 'node:path';
@@ -21,7 +22,7 @@ const server = createServer((q, r) => {
 await new Promise((r) => server.listen(4191, r));
 
 const b = await chromium.launch({
-  executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+  executablePath: chromePath(),
   args: ['--no-sandbox', '--enable-unsafe-swiftshader'],
 });
 const page = await b.newPage({ viewport: { width: 760, height: 1320 } });
